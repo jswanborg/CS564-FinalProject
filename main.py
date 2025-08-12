@@ -1,0 +1,245 @@
+from nicegui import ui, events
+from astropy.coordinates import SkyCoord
+from astropy import units as u
+import numpy as np
+from functools import partial
+import plotly.graph_objects as go
+
+#default value 
+
+#region button controls
+control_buttons: dict[str,ui.button] ={}
+constellation_buttons: list[ui.button] = []
+
+#Toggle constellation button group depending on which control button was clicked
+def toggle_constellationButtons(state: bool) -> None:
+    for b in constellation_buttons:
+        (b.enable if state else b.disable)()
+
+#Change the color of the currently-selected control button
+def recolor(active_key: str) -> None:
+    for key,b in control_buttons.items():
+        b.props(f'color={"negative" if key == active_key else "primary"}').update()
+
+#callbacks
+def choose_star() : toggle_constellationButtons(False); recolor('starSelectBtn')
+def choose_line() : toggle_constellationButtons(False); recolor('lineSelectBtn')
+def choose_constellation() : toggle_constellationButtons(True); recolor('constellationSelectBtn')
+
+#endregion
+
+#sign up dialog
+with ui.dialog() as signupDialog,ui.card():
+    with ui.row():
+        ui.label('Username:').style('flex: 1;')
+        ui.input().style('flex: 2;')
+    with ui.row():
+        ui.label('Password:').style('flex: 1;')
+        ui.input(password=True).style('flex: 2;')
+    with ui.row():
+        ui.label('Confirm Password:').style('flex: 1;')
+        ui.input(password=True).style('flex: 2;')
+    with ui.row():
+        ui.button('Sign up', on_click=lambda: (signupDialog.close(), loginDialog.close())).style('flex: 1;') #TODO: don't just close the dialog here
+        ui.button('Cancel', on_click=signupDialog.close).style('flex: 1;')
+
+#login dialog
+with ui.dialog() as loginDialog,ui.card():
+    with ui.row():
+        ui.label('Username:').style('flex: 1;')
+        ui.input().style('flex: 2;')
+    with ui.row():
+        ui.label('Password:').style('flex: 1;')
+        ui.input(password=True).style('flex: 2;')
+    with ui.row():
+        ui.button('Login', on_click=loginDialog.close).style('flex: 1;') #TODO: don't just close the dialog here
+        ui.button('Sign up', on_click=signupDialog.open).style('flex: 1;')
+        ui.button('Cancel', on_click=loginDialog.close).style('flex: 1;')
+
+#share dialog
+with ui.dialog() as shareDialog,ui.card():
+    with ui.row():
+        ui.label('Share selected constellation with user:').style('flex: 1;')
+        ui.input('Username').style('flex: 2;')
+    with ui.row():
+        ui.button('Share', on_click=shareDialog.close).style('flex: 1;') #TODO: don't just close the dialog here
+        ui.button('Cancel', on_click=shareDialog.close).style('flex: 1;')
+
+#'Header' label
+with ui.row():
+    ui.label('Mythic Sky Mapper').style('font-size: 24px; font-weight: bold')
+
+#region Control buttons/slider
+class numStars:
+    def __init__(self):
+        self.numStars = 50
+numStars = numStars()
+with ui.row().classes('items-center w-full'):
+    numStarsSlider = ui.slider(min=0, max=100, step=10).bind_value(numStars,'numStars').style('width: 200px')
+
+    starSelectBtn = ui.button(icon='star',on_click=choose_star,color='primary').tooltip('Select stars, right-click to unselect')
+    lineSelectBtn = ui.button(icon='line_start',on_click=choose_line,color='primary').tooltip('Select links, right-click to delete')
+    constellationSelectBtn = ui.button(icon='timeline',on_click=choose_constellation,color='primary').tooltip('Select constellations')
+    control_buttons.update({
+        'starSelectBtn': starSelectBtn,
+        'lineSelectBtn': lineSelectBtn,
+        'constellationSelectBtn': constellationSelectBtn
+    })
+    
+    with ui.button_group():
+        constellationSaveBtn = ui.button(icon='save').tooltip('Save constellation')
+        constellationEditBtn = ui.button(icon='edit').tooltip('Edit constellation')
+        constellationDeleteBtn = ui.button(icon='delete').tooltip('Delete constellation')
+        constellationShareBtn = ui.button(icon='share', on_click=shareDialog.open).tooltip('Share constellation')
+        constellation_buttons.extend([constellationSaveBtn, constellationEditBtn, constellationDeleteBtn, constellationShareBtn])
+        toggle_constellationButtons(False) #disabled by default
+
+    ui.space()
+    loginBtn = ui.button('Login', on_click=loginDialog.open).tooltip('Log in to share/save constellations')
+#endregion
+
+#region star map
+#coordinates TODO: put the real data here
+coords = SkyCoord(
+    ra=[10.625, 20.0, 30.0] * u.deg,
+    dec=[41.2, 50.0, 60.0] * u.deg,
+    frame='icrs',
+)
+
+#Get the coordinates in the format Plotly wants
+lon = ((coords.ra.deg + 180) % 360) - 180   # RA → [-180°, +180°]
+lat = coords.dec.deg
+
+#plotly figure
+fig = go.Figure()
+
+# Make each star
+fig.add_trace(go.Scattergeo(
+    lon=lon, lat=lat,
+    mode='markers',
+    marker=dict(size=6, color='black'),
+    hoverinfo='text',
+    text=[f'Star {i}' for i in range(len(lon))],
+    name='stars',
+))
+
+# Change the selected star to red
+fig.add_trace(go.Scattergeo(
+    lon=[], lat=[],
+    mode='markers',
+    marker=dict(size=12, color='red'),
+    name='selection',
+))
+
+# Make each link
+fig.add_trace(go.Scattergeo(
+    lon=[], lat=[],
+    mode='lines',
+    line=dict(color='blue', width=3),
+    name='link',
+))
+
+# map appearance: frame & 30° grid visible
+fig.update_geos(
+    projection_type='mollweide',
+    showframe=True,
+    framecolor='black',
+    #Uncomment to show grid lines
+    #lonaxis=dict(showgrid=True, dtick=30,
+    #             gridcolor='rgba(0,0,0,0.3)', gridwidth=1),
+    #lataxis=dict(showgrid=True, dtick=30,
+    #             gridcolor='rgba(0,0,0,0.3)', gridwidth=1),
+    showland=False, showcountries=False, showcoastlines=False, #this ain't a map of the earth we're looking at
+)
+plotHeight=750
+fig.update_layout(
+    title='Interactive Star Map – pan/zoom disabled',
+    dragmode=False,        # Don't allow drag‑pan or box zoom
+    margin=dict(l=0, r=0, t=40, b=0),
+    height=plotHeight,
+)
+
+PLOTLY_CONFIG = {
+    'scrollZoom': False,          # block wheel zoom
+    'doubleClick': False,         # block double‑click autoscale/zoom
+    'displayModeBar': False,      # hide toolbar completely
+}
+#Add to the UI
+plot = ui.plotly(fig).style('width: 100%; height: ' + str(plotHeight + 10) + 'px;')
+plot._props.setdefault('options', {})['config'] = PLOTLY_CONFIG
+plot.update()                                 # push initial options
+#endregion
+
+#region click interaction
+selected: list[int] = []              # current (partial) pair, 0–2 indices
+edges_lon: list[float|None] = []      # accumulated line segment longitudes (with None separators)
+edges_lat: list[float|None] = []      # accumulated line segment latitudes
+edges_set: set[tuple[int,int]] = set()  # store unique undirected edges (i<j)
+
+def handle_click(e: events.GenericEventArguments):
+    """Allow arbitrary number of line segments.
+    Click two stars -> a permanent line segment is added.
+    A third click starts a new segment (previous lines remain).
+    """
+    points = e.args.get('points') or []
+    if not points:
+        return
+    p0 = points[0]
+    # Ensure click came from the stars trace (trace order: 0=stars,1=selection,2=link currently OR adjust if changed)
+    # Based on current construction: trace 0 = stars, 1 = selection, 2 = link lines.
+    curve_number = p0.get('curveNumber')
+    if curve_number != 0:
+        return
+    idx = p0.get('pointIndex')
+    if idx is None or not (0 <= idx < len(lon)):
+        return
+
+    # Toggle deselect if clicking the same single-selected star
+    if len(selected) == 1 and selected[0] == idx:
+        selected.clear()
+        fig.data[1].lon = []
+        fig.data[1].lat = []
+        plot.update(); plot._props['options']['config'] = PLOTLY_CONFIG; plot.update()
+        return
+
+    # Add star to selection if not already present (avoid duplicates)
+    if idx not in selected:
+        selected.append(idx)
+
+    # Keep only first two (ignore any accidental extras robustly)
+    if len(selected) > 2:
+        selected[:] = selected[:2]
+
+    # Update selection preview (red markers)
+    fig.data[1].lon = [lon[i] for i in selected]
+    fig.data[1].lat = [lat[i] for i in selected]
+
+    if len(selected) == 2:
+        i, j = selected
+        # Prevent self-link or duplicate undirected link
+        if i == j:
+            ui.notify('Cannot link a star to itself', type='warning', position='top')
+        else:
+            a, b = (i, j) if i < j else (j, i)
+            if (a, b) in edges_set:
+                ui.notify('Edge already exists', type='warning', position='top')
+            else:
+                edges_set.add((a, b))
+                edges_lon.extend([lon[i], lon[j], None])
+                edges_lat.extend([lat[i], lat[j], None])
+                fig.data[2].lon = edges_lon
+                fig.data[2].lat = edges_lat
+        # Reset after committing
+        selected.clear()
+        fig.data[1].lon = []
+        fig.data[1].lat = []
+
+    plot.update()
+    plot._props['options']['config'] = PLOTLY_CONFIG
+    plot.update()
+
+plot.on('plotly_click', handle_click)           # hook JS → Python
+#endregion
+
+# Start the UI
+ui.run()
