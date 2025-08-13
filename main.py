@@ -1,8 +1,6 @@
 from nicegui import ui, events
 from astropy.coordinates import SkyCoord
 from astropy import units as u
-import numpy as np
-from functools import partial
 import plotly.graph_objects as go
 
 #default value 
@@ -70,12 +68,12 @@ with ui.row():
     ui.label('Mythic Sky Mapper').style('font-size: 24px; font-weight: bold')
 
 #region Control buttons/slider
-class numStars:
+class NumStars:
     def __init__(self):
         self.numStars = 50
-numStars = numStars()
+num_stars_instance = NumStars()
 with ui.row().classes('items-center w-full'):
-    numStarsSlider = ui.slider(min=0, max=100, step=10).bind_value(numStars,'numStars').style('width: 200px')
+    numStarsSlider = ui.slider(min=0, max=100, step=10).bind_value(num_stars_instance,'numStars').style('width: 200px')
 
     starSelectBtn = ui.button(icon='star',on_click=choose_star,color='primary').tooltip('Select stars, right-click to unselect')
     lineSelectBtn = ui.button(icon='line_start',on_click=choose_line,color='primary').tooltip('Select links, right-click to delete')
@@ -113,7 +111,25 @@ lat = coords.dec.deg
 #plotly figure
 fig = go.Figure()
 
-# Make each star
+# Make each link FIRST (so it renders underneath later marker traces)
+fig.add_trace(go.Scattergeo(
+    lon=[], lat=[],
+    mode='lines',
+    line=dict(color='blue', width=3),
+    name='link',
+))
+
+# Invisible large hitbox markers to ease clicking (rendered below visible stars)
+fig.add_trace(go.Scattergeo(
+    lon=lon, lat=lat,
+    mode='markers',
+    marker=dict(size=22, color='rgba(0,0,0,0)'),
+    hoverinfo='skip',
+    name='hitbox',
+    showlegend=False,
+))
+
+# Visible stars (smaller, above hitbox)
 fig.add_trace(go.Scattergeo(
     lon=lon, lat=lat,
     mode='markers',
@@ -123,20 +139,13 @@ fig.add_trace(go.Scattergeo(
     name='stars',
 ))
 
-# Change the selected star to red
+# Selection highlight (red with light halo) rendered on top
 fig.add_trace(go.Scattergeo(
     lon=[], lat=[],
     mode='markers',
-    marker=dict(size=12, color='red'),
+    marker=dict(size=18, color='red', line=dict(color='rgba(255,255,0,0.85)', width=3)),
     name='selection',
-))
-
-# Make each link
-fig.add_trace(go.Scattergeo(
-    lon=[], lat=[],
-    mode='lines',
-    line=dict(color='blue', width=3),
-    name='link',
+    showlegend=False,
 ))
 
 # map appearance: frame & 30° grid visible
@@ -176,8 +185,16 @@ edges_lon: list[float|None] = []      # accumulated line segment longitudes (wit
 edges_lat: list[float|None] = []      # accumulated line segment latitudes
 edges_set: set[tuple[int,int]] = set()  # store unique undirected edges (i<j)
 
+def _trace_index(name: str) -> int:
+    for i, tr in enumerate(fig.data):
+        if getattr(tr, 'name', None) == name:
+            return i
+    raise ValueError(f'Trace with name {name!r} not found')
+
 def handle_click(e: events.GenericEventArguments):
-    """Allow arbitrary number of line segments.
+    """
+    AI-generated code that doesn't really work
+    Allow arbitrary number of line segments.
     Click two stars -> a permanent line segment is added.
     A third click starts a new segment (previous lines remain).
     """
@@ -185,20 +202,25 @@ def handle_click(e: events.GenericEventArguments):
     if not points:
         return
     p0 = points[0]
-    # Ensure click came from the stars trace (trace order: 0=stars,1=selection,2=link currently OR adjust if changed)
-    # Based on current construction: trace 0 = stars, 1 = selection, 2 = link lines.
+    # Resolve current trace indices dynamically (robust against future reordering)
+    stars_idx = _trace_index('stars')
+    hitbox_idx = _trace_index('hitbox')
+    selection_idx = _trace_index('selection')
+    link_idx = _trace_index('link')
+
+    # Ensure click came from the stars or hitbox trace
     curve_number = p0.get('curveNumber')
-    if curve_number != 0:
-        return
+    if curve_number not in (stars_idx, hitbox_idx):
+        return  # ignore clicks on selection markers or existing lines
     idx = p0.get('pointIndex')
-    if idx is None or not (0 <= idx < len(lon)):
+    if idx is None: #or not (0 <= idx < len(lon)):
         return
 
     # Toggle deselect if clicking the same single-selected star
     if len(selected) == 1 and selected[0] == idx:
         selected.clear()
-        fig.data[1].lon = []
-        fig.data[1].lat = []
+        fig.data[selection_idx].lon = []
+        fig.data[selection_idx].lat = []
         plot.update(); plot._props['options']['config'] = PLOTLY_CONFIG; plot.update()
         return
 
@@ -211,8 +233,10 @@ def handle_click(e: events.GenericEventArguments):
         selected[:] = selected[:2]
 
     # Update selection preview (red markers)
-    fig.data[1].lon = [lon[i] for i in selected]
-    fig.data[1].lat = [lat[i] for i in selected]
+    # Filter any accidental out-of-range indices defensively
+    valid_indices = [i for i in selected if 0 <= i < len(lon)]
+    fig.data[selection_idx].lon = [lon[i] for i in valid_indices]
+    fig.data[selection_idx].lat = [lat[i] for i in valid_indices]
 
     if len(selected) == 2:
         i, j = selected
@@ -227,17 +251,17 @@ def handle_click(e: events.GenericEventArguments):
                 edges_set.add((a, b))
                 edges_lon.extend([lon[i], lon[j], None])
                 edges_lat.extend([lat[i], lat[j], None])
-                fig.data[2].lon = edges_lon
-                fig.data[2].lat = edges_lat
+                fig.data[link_idx].lon = edges_lon
+                fig.data[link_idx].lat = edges_lat
         # Reset after committing
         selected.clear()
-        fig.data[1].lon = []
-        fig.data[1].lat = []
+    fig.data[selection_idx].lon = []
+    fig.data[selection_idx].lat = []
 
     plot.update()
     plot._props['options']['config'] = PLOTLY_CONFIG
     plot.update()
-
+    
 plot.on('plotly_click', handle_click)           # hook JS → Python
 #endregion
 
