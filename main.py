@@ -27,32 +27,34 @@ def recolor(active_key: str) -> None:
     for key,b in control_buttons.items():
         b.props(f'color={"negative" if key == active_key else "primary"}').update()
 
+
+#When we're in our respective modes, make the other hitboxes too small to hit
 def _set_mode_star():
     fig.data[_trace_index('hitbox')].marker.size = 22
     fig.data[_trace_index('link_hit')].marker.size = 0
-    plot.update(); _apply_plotly_config()
+    _apply_to_plot()
 
-def _set_mode_line():
+def _set_mode_link():
     fig.data[_trace_index('hitbox')].marker.size = 0
     fig.data[_trace_index('link_hit')].marker.size = 36
-    plot.update(); _apply_plotly_config()
+    _apply_to_plot()
 
-#callbacksdef
+
+#callbacks; makes it easier to do multiple things when a button is selected
 def choose_star():
     toggle_constellationButtons(False); recolor('starSelectBtn')
-    clear_line_highlight()
+    clear_link_highlight()
     _set_mode_star()
 
-def choose_line():
-    toggle_constellationButtons(False); recolor('lineSelectBtn')
+def choose_link():
+    toggle_constellationButtons(False); recolor('linkSelectBtn')
     clear_star_highlight()
-    _set_mode_line()
+    _set_mode_link()
 
 def choose_constellation():
     toggle_constellationButtons(True); recolor('constellationSelectBtn')
-    clear_star_highlight(); clear_line_highlight()
+    clear_star_highlight(); clear_link_highlight()
     _set_mode_star()  # or define a separate mode if you prefer
-
 #endregion
 
 #sign up dialog
@@ -96,7 +98,7 @@ with ui.dialog() as shareDialog,ui.card():
 with ui.row():
     ui.label('A Sky Full of Stars by Mythic Sky Mapper').style('font-size: 24px; font-weight: bold')
 
-#region Control buttons/slider
+#region buttons/slider
 class NumStars:
     def __init__(self):
         self.numStars = 5
@@ -105,13 +107,13 @@ with ui.row().classes('items-center w-full'):
     numStarsSlider = ui.slider(min=0, max=100, step=10).bind_value(num_stars_instance,'numStars').style('width: 200px')
 
     starSelectBtn = ui.button(icon='star',on_click=choose_star,color='primary').tooltip('Select stars, select the same star again to unselect')
-    lineSelectBtn = ui.button(icon='line_start',on_click=choose_line,color='primary').tooltip('Select links, use Del key to delete')
+    linkSelectBtn = ui.button(icon='link',on_click=choose_link,color='primary').tooltip('Select links, use Del key to delete')
     constellationSelectBtn = ui.button(icon='timeline',on_click=choose_constellation,color='primary').tooltip('Select constellations')
     
     # Register control buttons
     control_buttons.update({
         'starSelectBtn': starSelectBtn,
-        'lineSelectBtn': lineSelectBtn,
+        'linkSelectBtn': linkSelectBtn,
         'constellationSelectBtn': constellationSelectBtn
     })
     # Set starSelectBtn as visually selected by default
@@ -141,10 +143,13 @@ coords = SkyCoord(
 lon = ((coords.ra.deg + 180) % 360) - 180   # RA → [-180°, +180°]
 lat = coords.dec.deg
 
+
 #plotly figure
 fig = go.Figure()
 fig.update_layout(clickmode='event')
 
+
+#Traces that make parts of the plot visible and/or selectable
 # Make each link FIRST (so it renders underneath later marker traces)
 fig.add_trace(go.Scattergeo(
     lon=[], lat=[],
@@ -152,6 +157,7 @@ fig.add_trace(go.Scattergeo(
     line=dict(color='blue', width=3),
     name='link',
 ))
+
 # Invisible large star hitbox markers to ease clicking
 fig.add_trace(go.Scattergeo(
     lon=lon, lat=lat,
@@ -181,7 +187,7 @@ fig.add_trace(go.Scattergeo(
     showlegend=False,
 ))
 
-# Selected line highlight
+# Selected link highlight
 fig.add_trace(go.Scattergeo(
     lon=[], lat=[],
     mode='lines',
@@ -190,16 +196,15 @@ fig.add_trace(go.Scattergeo(
     showlegend=False,
 ))
 
-# One invisible marker per curve position to make lines clickable
+# One invisible marker per curve position to make links clickable
 fig.add_trace(go.Scattergeo(
     lon=[], lat=[],
     mode='markers',
-    marker=dict(size=32, color='rgba(0,0,0,0.1)'),  # 0s => invisible
+    marker=dict(size=32, color='rgba(0,0,0,0)'),  # 0s => invisible
     name='link_hit',
     hoverinfo='none',
     showlegend=False,
 ))
-
 
 def _trace_index(name: str) -> int:
     for i, tr in enumerate(fig.data):
@@ -214,15 +219,22 @@ def clear_star_highlight():
     except ValueError:
         pass
 
-def clear_line_highlight():
+def clear_link_highlight():
     try:
         li = _trace_index('link_selected')
         fig.data[li].lon, fig.data[li].lat = [], []
     except ValueError:
         pass
 
-def _apply_plotly_config():
-    # re-apply config after every plot.update() in your setup
+#re-apply config and update whenever needed
+#TODO: Legend controls still show up and are usable but *very* broken
+PLOTLY_CONFIG = {
+    'scrollZoom': False,          # block wheel zoom
+    'doubleClick': False,         # block double‑click autoscale/zoom
+    'displayModeBar': False,      # hide toolbar completely
+}
+
+def _apply_to_plot():
     plot._props['options']['config'] = PLOTLY_CONFIG
     plot.update()
 
@@ -240,17 +252,12 @@ fig.update_geos(
 )
 plotHeight=750
 fig.update_layout(
-    #title='Interactive Star Map – pan/zoom disabled', #Change if you think we need a title on the graph
+    #title='Interactive Star Map – pan/zoom disabled', #Change/uncomment if you think we need a title on the graph
     dragmode=False,        # Don't allow drag‑pan or box zoom
     margin=dict(l=0, r=0, t=40, b=0),
     height=plotHeight,
 )
 
-PLOTLY_CONFIG = {
-    'scrollZoom': False,          # block wheel zoom
-    'doubleClick': False,         # block double‑click autoscale/zoom
-    'displayModeBar': False,      # hide toolbar completely
-}
 #Add to the UI
 plot = ui.plotly(fig).style('width: 100%; height: ' + str(plotHeight + 10) + 'px;')
 plot._props.setdefault('options', {})['config'] = PLOTLY_CONFIG
@@ -259,10 +266,10 @@ plot.update()                                 # push initial options
 
 #region click interaction
 selected: list[int] = []              # current (partial) pair, 0–2 indices
-edges_lon: list[float|None] = []      # accumulated line segment longitudes (with None separators)
-edges_lat: list[float|None] = []      # accumulated line segment latitudes
+edges_lon: list[float|None] = []      # accumulated link segment longitudes (with None separators)
+edges_lat: list[float|None] = []      # accumulated link segment latitudes
 edges_set: set[tuple[int,int]] = set()  # store unique undirected edges (i<j)
-selected_edge: tuple[int, int] | None = None  # For line deletion
+selected_edge: tuple[int, int] | None = None  # For link deletion
 edges_list: list[tuple[int, int]] = []   # keeps (a,b) in the SAME order as edges_lon/lat
 N_CURVE_SAMPLES = 64      # drawing detail for each edge (curvature)
 N_HIT_MARKERS   = 9       # click targets per edge along the curve
@@ -318,14 +325,13 @@ def handle_click(e: events.GenericEventArguments):
     hitbox_idx     = _trace_index('hitbox')
     link_hit_idx   = _trace_index('link_hit')
     selection_idx  = _trace_index('selection')
-    link_sel_idx   = _trace_index('link_selected')
 
     pts = e.args.get('points') or []
     if not pts:
         return
 
-    # ================= LINE MODE =================
-    if active_control == 'lineSelectBtn':
+    # ================= LINK MODE =================
+    if active_control == 'linkSelectBtn':
         pts = e.args.get('points') or []
         link_hit_idx = _trace_index('link_hit')
 
@@ -339,7 +345,6 @@ def handle_click(e: events.GenericEventArguments):
         if idx is None:
             return
         edge_num = int(idx) // N_HIT_MARKERS
-        ui.notify(f'link_hit picked: idx={idx}, edge_num={edge_num}', position='top') #debug
         if not (0 <= edge_num < len(edges_list)):
             return
 
@@ -351,7 +356,7 @@ def handle_click(e: events.GenericEventArguments):
         sel_idx = _trace_index('link_selected')
         fig.data[sel_idx].lon, fig.data[sel_idx].lat = LON, LAT
 
-        plot.update(); _apply_plotly_config()
+        _apply_to_plot()
         return
     
     # ================= STAR MODE =================
@@ -369,7 +374,7 @@ def handle_click(e: events.GenericEventArguments):
             selected.clear()
             fig.data[selection_idx].lon = []
             fig.data[selection_idx].lat = []
-            plot.update(); _apply_plotly_config()
+            _apply_to_plot()
             return
 
         if idx not in selected:
@@ -394,7 +399,7 @@ def handle_click(e: events.GenericEventArguments):
             fig.data[selection_idx].lon = []
             fig.data[selection_idx].lat = []
 
-        plot.update(); _apply_plotly_config()
+        _apply_to_plot()
   
 plot.on('plotly_click', handle_click)           # hook JS → Python
 
@@ -410,7 +415,7 @@ def _is_delete_key(e: events.KeyEventArguments) -> bool:
 
 def _delete_selected_edge():
     global selected_edge, edges_set, edges_list
-    if active_control == 'lineSelectBtn' and selected_edge is not None:
+    if active_control == 'linkSelectBtn' and selected_edge is not None:
         if selected_edge in edges_set:
             edges_set.remove(selected_edge)
         if selected_edge in edges_list:
@@ -425,8 +430,8 @@ def _delete_selected_edge():
         fig.data[link_sel_idx].lat = []
         selected_edge = None
 
-        plot.update(); _apply_plotly_config()
-        ui.notify('Edge deleted.', type='info', position='top')
+        _apply_to_plot()
+        #ui.notify('Edge deleted.', type='info', position='top')
 
 def _on_key(e: events.KeyEventArguments):
     if getattr(e.action, 'keydown', False) and _is_delete_key(e):
