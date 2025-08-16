@@ -4,6 +4,20 @@ from astropy import units as u
 import plotly.graph_objects as go
 import numpy as np
 
+saved_constellations = []
+
+#star data object; just load in arbitrarily for now
+star_data = [
+    {'id': i, 'ra': ra, 'dec': dec}
+    for i, (ra, dec) in enumerate([
+        (10.625, 41.2), (20.0, 50.0), (30.0, 60.0), (156.23, -12.34), (44.12, 35.67),
+        (278.45, 78.90), (12.67, -45.12), (89.34, 10.23), (201.56, 55.67), (175.23, -60.12),
+        (320.11, 22.45), (60.78, 70.89), (110.45, -30.56), (250.67, 15.34), (5.89, 48.90),
+        (135.79, -80.12), (80.12, 33.45), (210.34, 5.67), (300.56, -25.34), (25.67, 60.12),
+        (190.23, -10.45), (270.45, 40.23), (55.12, -70.56)
+    ])
+]
+
 #region button controls
 control_buttons: dict[str,ui.button] ={}
 constellation_buttons: list[ui.button] = []
@@ -41,18 +55,28 @@ def _set_mode_link():
 #callbacks; makes it easier to do multiple things when a button is selected
 def choose_star():
     toggle_constellationButtons(False); recolor('starSelectBtn')
-    clear_link_highlight()
+    clear_link_highlight(); clear_constellation_highlight()
     _set_mode_star()
 
 def choose_link():
     toggle_constellationButtons(False); recolor('linkSelectBtn')
-    clear_star_highlight()
+    clear_star_highlight(); clear_constellation_highlight()
     _set_mode_link()
 
 def choose_constellation():
     toggle_constellationButtons(True); recolor('constellationSelectBtn')
     clear_star_highlight(); clear_link_highlight()
-    _set_mode_star()  # or define a separate mode if you prefer
+    _set_mode_link()  # enable link hit markers for picking
+    # Only highlight links that are NOT part of any saved constellation
+    used_edges = set()
+    for c in saved_constellations:
+        used_edges.update(c['edges'])
+    unused_edges = [e for e in edges_list if e not in used_edges]
+    if unused_edges:
+        _draw_edges_into_trace(unused_edges, 'constellation_selected')
+    else:
+        clear_constellation_highlight()
+    _apply_to_plot()
 #endregion
 
 #sign up dialog
@@ -129,11 +153,57 @@ with ui.row().classes('items-center w-full'):
     loginBtn = ui.button('Login', on_click=loginDialog.open).tooltip('Log in to share/save constellations')
 #endregion
 
+
+#TODO: comment this better
+def save_constellation():
+    # Get selected links from the overlay trace
+    ci = _trace_index('constellation_selected')
+    # Find which links are currently highlighted
+    # We'll use the edges that were last drawn into the overlay
+    # (Assume _draw_edges_into_trace was called with the current selection)
+    # For simplicity, store the currently highlighted edges
+    highlighted_edges = []
+    # Reconstruct from the overlay trace (lon/lat) by matching to edges_list
+    # But we already have the last selection in the overlay, so let's keep a global
+    global last_constellation_edges
+    try:
+        edges_to_save = last_constellation_edges if last_constellation_edges else []
+    except NameError:
+        edges_to_save = []
+    name = constellationNameInput.value
+    saved_constellations.append({'name': name, 'edges': edges_to_save})
+    ui.notify('Saved!', type='positive', position='top')
+    clear_constellation_highlight()
+    _apply_to_plot()
+
+constellationSaveBtn.on('click', save_constellation)
+
+
+#Region name of constellation controls
+with ui.row().classes('items-center'):
+    ui.label('Constellation name:').style('margin-right: 8px;')
+    constellationNameInput = ui.input().style('min-width: 180px;')
+    constellationNameInput.disable()
+
+# Enable/disable constellationNameInput based on active_control
+def update_constellation_name_input():
+    if active_control == 'constellationSelectBtn':
+        constellationNameInput.enable()
+    else:
+        constellationNameInput.disable()
+
+# Patch recolor to also update input enabled state
+_orig_recolor = recolor
+def recolor(active_key: str) -> None:
+    _orig_recolor(active_key)
+    update_constellation_name_input()
+#endregion
+
 #region star map
 #coordinates TODO: put the real data here
 coords = SkyCoord(
-    ra=[10.625, 20.0, 30.0, 156.23, 44.12, 278.45, 12.67, 89.34, 201.56, 175.23, 320.11, 60.78, 110.45, 250.67, 5.89, 135.79, 80.12, 210.34, 300.56, 25.67, 190.23, 270.45, 55.12] * u.deg,
-    dec=[41.2, 50.0, 60.0, -12.34, 35.67, 78.90, -45.12, 10.23, 55.67, -60.12, 22.45, 70.89, -30.56, 15.34, 48.90, -80.12, 33.45, 5.67, -25.34, 60.12, -10.45, 40.23, -70.56] * u.deg,
+    ra=[s['ra'] for s in star_data] * u.deg,
+    dec=[s['dec'] for s in star_data] * u.deg,
     frame='icrs',
 )
 
@@ -172,7 +242,7 @@ fig.add_trace(go.Scattergeo(
     mode='markers',
     marker=dict(size=6, color='black'),
     hoverinfo='text',
-    text=[f'Star {i}' for i in range(len(lon))],
+    text=[f"Star {s['id']}: RA={s['ra']}, Dec={s['dec']}" for s in star_data],
     name='stars',
 ))
 
@@ -191,6 +261,15 @@ fig.add_trace(go.Scattergeo(
     mode='lines',
     line=dict(color='red', width=5),
     name='link_selected',
+    showlegend=False,
+))
+
+# Selected constellation highlight (group of links)
+fig.add_trace(go.Scattergeo(
+    lon=[], lat=[],
+    mode='lines',
+    line=dict(color='orange', width=6),
+    name='constellation_selected',
     showlegend=False,
 ))
 
@@ -221,6 +300,13 @@ def clear_link_highlight():
     try:
         li = _trace_index('link_selected')
         fig.data[li].lon, fig.data[li].lat = [], []
+    except ValueError:
+        pass
+
+def clear_constellation_highlight():
+    try:
+        ci = _trace_index('constellation_selected')
+        fig.data[ci].lon, fig.data[ci].lat = [], []
     except ValueError:
         pass
 
@@ -316,6 +402,50 @@ def _rebuild_edges_from_list():
     fig.data[link_hit_idx].lon, fig.data[link_hit_idx].lat = hit_lon,   hit_lat
     fig.data[link_hit_idx].customdata = hit_edge           # ← crucial
 
+def _draw_edges_into_trace(edges: list[tuple[int,int]], trace_name: str):
+    """Render the given edges as curved segments into the named trace."""
+    global last_constellation_edges
+    if trace_name == 'constellation_selected':
+        last_constellation_edges = edges.copy()
+    LON_ALL: list[float|None] = []
+    LAT_ALL: list[float|None] = []
+    for i, j in edges:
+        LON, LAT = _gc_path_lons_lats(i, j, N_CURVE_SAMPLES)
+        LON_ALL.extend(LON + [None])
+        LAT_ALL.extend(LAT + [None])
+    ti = _trace_index(trace_name)
+    fig.data[ti].lon, fig.data[ti].lat = LON_ALL, LAT_ALL
+
+def _build_constellation_from_edge(edge: tuple[int,int]) -> list[tuple[int,int]]:
+    """Return all edges connected to the given edge as a constellation (connected component)."""
+    if not edges_list:
+        return []
+    # Build adjacency of stars
+    adj: dict[int, set[int]] = {}
+    for a, b in edges_list:
+        adj.setdefault(a, set()).add(b)
+        adj.setdefault(b, set()).add(a)
+    # BFS/DFS from the two endpoints
+    start_a, start_b = edge
+    stack = [start_a, start_b]
+    seen: set[int] = set()
+    while stack:
+        n = stack.pop()
+        if n in seen:
+            continue
+        seen.add(n)
+        for m in adj.get(n, ()): stack.append(m)
+    # Collect all edges whose endpoints are within seen
+    comp_edges = [(a, b) for (a, b) in edges_list if a in seen and b in seen]
+    return comp_edges
+
+def _highlight_all_edges_as_constellation():
+    if edges_list:
+        _draw_edges_into_trace(edges_list, 'constellation_selected')
+    else:
+        clear_constellation_highlight()
+    _apply_to_plot()
+
 def handle_click(e: events.GenericEventArguments):
     global selected_edge, selected
 
@@ -326,6 +456,24 @@ def handle_click(e: events.GenericEventArguments):
 
     pts = e.args.get('points') or []
     if not pts:
+        return
+
+    # ================= CONSTELLATION MODE =================
+    if active_control == 'constellationSelectBtn':
+        link_hit_idx = _trace_index('link_hit')
+        p = next((x for x in pts if x.get('curveNumber') == link_hit_idx), None)
+        if not p:
+            return
+        idx = p.get('pointIndex', p.get('pointNumber'))
+        if idx is None:
+            return
+        edge_num = int(idx) // N_HIT_MARKERS
+        if not (0 <= edge_num < len(edges_list)):
+            return
+        seed = edges_list[edge_num]
+        comp = _build_constellation_from_edge(seed)
+        _draw_edges_into_trace(comp, 'constellation_selected')
+        _apply_to_plot()
         return
 
     # ================= LINK MODE =================
