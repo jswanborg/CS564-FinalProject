@@ -11,6 +11,7 @@ DB_CONFIG = {
 
 try:
     # Establish a connection to the MySQL database
+    
     mydb = mysql.connector.connect(**DB_CONFIG)
     cursor = mydb.cursor()
 
@@ -22,7 +23,7 @@ try:
         df = pd.DataFrame(result.fetchall(), columns=[desc[0] for desc in result.description])
 
     # Print the first few rows of the DataFrame
-    print(df.head())
+    print(df)
 
 except mysql.connector.Error as err:
     print(f"Error connecting to MySQL: {err}")
