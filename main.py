@@ -4,9 +4,6 @@ from astropy import units as u
 import plotly.graph_objects as go
 import numpy as np
 
-
-#default value 
-
 #region button controls
 control_buttons: dict[str,ui.button] ={}
 constellation_buttons: list[ui.button] = []
@@ -17,7 +14,8 @@ def toggle_constellationButtons(state: bool) -> None:
         (b.enable if state else b.disable)()
 
 
-# Track which control button is active
+#Track which control button is active
+#Default to selecting stars
 active_control: str = 'starSelectBtn'
 
 #Change the color of the currently-selected control button
