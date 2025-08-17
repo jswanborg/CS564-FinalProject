@@ -121,9 +121,11 @@ try:
                     return
                 try:
                     # Check if username is already used
-                    result_args = cursor.callproc('userNameUsed', (username,))
+                    cursor.callproc('userNameUsed', (username,))
+                    for result in cursor.stored_results():
+                        row = result.fetchone()
                     # The second argument is the OUT parameter (1 if used, 0 otherwise)
-                    if result_args[-1] == 1:
+                    if row[0] == 1:
                         ui.notify('Username is not unique.', type='negative')
                         return
                     # Username is not used, proceed to create user
@@ -156,12 +158,14 @@ try:
                     return
                 try:
                     # Call checkPassword stored procedure
-                    result_args = cursor.callproc('checkPassword', (username, password,))
+                    cursor.callproc('checkPassword', (username, password,))
+                    for result in cursor.stored_results():
+                        row = result.fetchone()
                     # The third argument is the OUT parameter (1 if correct, 0 otherwise)
                     print("Username:", username)
                     print("Password:", password)
-                    print("Result args:", result_args)
-                    if result_args[-1] == 1:
+                    print("Result args:", row[0])
+                    if row[0] == 1:
                         ui.notify('Login successful!', type='positive')
                         loginDialog.close()
                     else:
