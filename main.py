@@ -3,589 +3,619 @@ from astropy.coordinates import SkyCoord
 from astropy import units as u
 import plotly.graph_objects as go
 import numpy as np
-
-saved_constellations = []
-
-#star data object; just load in arbitrarily for now
-star_data = [
-    {'id': i, 'ra': ra, 'dec': dec}
-    for i, (ra, dec) in enumerate([
-        (10.625, 41.2), (20.0, 50.0), (30.0, 60.0), (156.23, -12.34), (44.12, 35.67),
-        (278.45, 78.90), (12.67, -45.12), (89.34, 10.23), (201.56, 55.67), (175.23, -60.12),
-        (320.11, 22.45), (60.78, 70.89), (110.45, -30.56), (250.67, 15.34), (5.89, 48.90),
-        (135.79, -80.12), (80.12, 33.45), (210.34, 5.67), (300.56, -25.34), (25.67, 60.12),
-        (190.23, -10.45), (270.45, 40.23), (55.12, -70.56)
-    ])
-]
-
-#region button controls
-control_buttons: dict[str,ui.button] ={}
-constellation_buttons: list[ui.button] = []
-
-#Toggle constellation button group depending on which control button was clicked
-def toggle_constellationButtons(state: bool) -> None:
-    for b in constellation_buttons:
-        (b.enable if state else b.disable)()
+import mysql.connector
+import pandas as pd
 
 
-#Track which control button is active
-#Default to selecting stars
-active_control: str = 'starSelectBtn'
-
-#Change the color of the currently-selected control button
-def recolor(active_key: str) -> None:
-    global active_control
-    active_control = active_key
-    for key,b in control_buttons.items():
-        b.props(f'color={"negative" if key == active_key else "primary"}').update()
-
-
-#When we're in our respective modes, make the other hitboxes too small to hit
-def _set_mode_star():
-    fig.data[_trace_index('hitbox')].marker.size = 22
-    fig.data[_trace_index('link_hit')].marker.size = 0
-    _apply_to_plot()
-
-def _set_mode_link():
-    fig.data[_trace_index('hitbox')].marker.size = 0
-    fig.data[_trace_index('link_hit')].marker.size = 36
-    _apply_to_plot()
-
-
-#callbacks; makes it easier to do multiple things when a button is selected
-def choose_star():
-    toggle_constellationButtons(False); recolor('starSelectBtn')
-    clear_link_highlight(); clear_constellation_highlight()
-    _set_mode_star()
-
-def choose_link():
-    toggle_constellationButtons(False); recolor('linkSelectBtn')
-    clear_star_highlight(); clear_constellation_highlight()
-    _set_mode_link()
-
-def choose_constellation():
-    toggle_constellationButtons(True); recolor('constellationSelectBtn')
-    clear_star_highlight(); clear_link_highlight()
-    _set_mode_link()  # enable link hit markers for picking
-    # Only highlight links that are NOT part of any saved constellation
-    used_edges = set()
-    for c in saved_constellations:
-        used_edges.update(c['edges'])
-    unused_edges = [e for e in edges_list if e not in used_edges]
-    if unused_edges:
-        _draw_edges_into_trace(unused_edges, 'constellation_selected')
-    else:
-        clear_constellation_highlight()
-    _apply_to_plot()
-#endregion
-
-#sign up dialog
-with ui.dialog() as signupDialog,ui.card():
-    with ui.row():
-        ui.label('Username:').style('flex: 1;')
-        ui.input().style('flex: 2;')
-    with ui.row():
-        ui.label('Password:').style('flex: 1;')
-        ui.input(password=True).style('flex: 2;')
-    with ui.row():
-        ui.label('Confirm Password:').style('flex: 1;')
-        ui.input(password=True).style('flex: 2;')
-    with ui.row():
-        ui.button('Sign up', on_click=lambda: (signupDialog.close(), loginDialog.close())).style('flex: 1;') #TODO: don't just close the dialog here
-        ui.button('Cancel', on_click=signupDialog.close).style('flex: 1;')
-
-#login dialog
-with ui.dialog() as loginDialog,ui.card():
-    with ui.row():
-        ui.label('Username:').style('flex: 1;')
-        ui.input().style('flex: 2;')
-    with ui.row():
-        ui.label('Password:').style('flex: 1;')
-        ui.input(password=True).style('flex: 2;')
-    with ui.row():
-        ui.button('Login', on_click=loginDialog.close).style('flex: 1;') #TODO: don't just close the dialog here
-        ui.button('Sign up', on_click=signupDialog.open).style('flex: 1;')
-        ui.button('Cancel', on_click=loginDialog.close).style('flex: 1;')
-
-#share dialog
-with ui.dialog() as shareDialog,ui.card():
-    with ui.row():
-        ui.label('Share selected constellation with user:').style('flex: 1;')
-        ui.input('User ID').style('flex: 2;')
-    with ui.row():
-        ui.button('Share', on_click=shareDialog.close).style('flex: 1;') #TODO: don't just close the dialog here
-        ui.button('Cancel', on_click=shareDialog.close).style('flex: 1;')
-
-#'Header' label
-with ui.row():
-    ui.label('A Sky Full of Stars by Mythic Sky Mapper').style('font-size: 24px; font-weight: bold')
-
-#region buttons/slider
-class NumStars:
-    def __init__(self):
-        self.numStars = 5
-num_stars_instance = NumStars()
-with ui.row().classes('items-center w-full'):
-    numStarsSlider = ui.slider(min=0, max=100, step=10).bind_value(num_stars_instance,'numStars').style('width: 200px')
-
-    starSelectBtn = ui.button(icon='star',on_click=choose_star,color='primary').tooltip('Select stars, select the same star again to unselect')
-    linkSelectBtn = ui.button(icon='link',on_click=choose_link,color='primary').tooltip('Select links, use Del key to delete')
-    constellationSelectBtn = ui.button(icon='timeline',on_click=choose_constellation,color='primary').tooltip('Select constellations')
-    
-    # Register control buttons
-    control_buttons.update({
-        'starSelectBtn': starSelectBtn,
-        'linkSelectBtn': linkSelectBtn,
-        'constellationSelectBtn': constellationSelectBtn
-    })
-    # Set starSelectBtn as visually selected by default
-    starSelectBtn.props('color=negative').update()
-
-    with ui.button_group():
-        constellationSaveBtn = ui.button(icon='save').tooltip('Save constellation')
-        constellationEditBtn = ui.button(icon='edit').tooltip('Edit constellation')
-        constellationDeleteBtn = ui.button(icon='delete').tooltip('Delete constellation')
-        constellationShareBtn = ui.button(icon='share', on_click=shareDialog.open).tooltip('Share constellation')
-        constellation_buttons.extend([constellationSaveBtn, constellationEditBtn, constellationDeleteBtn, constellationShareBtn])
-        toggle_constellationButtons(False) #disabled by default
-
-    ui.space()
-    loginBtn = ui.button('Login', on_click=loginDialog.open).tooltip('Log in to share/save constellations')
-#endregion
-
-
-#TODO: comment this better
-def save_constellation():
-    # Get selected links from the overlay trace
-    ci = _trace_index('constellation_selected')
-    # Find which links are currently highlighted
-    # We'll use the edges that were last drawn into the overlay
-    # (Assume _draw_edges_into_trace was called with the current selection)
-    # For simplicity, store the currently highlighted edges
-    highlighted_edges = []
-    # Reconstruct from the overlay trace (lon/lat) by matching to edges_list
-    # But we already have the last selection in the overlay, so let's keep a global
-    global last_constellation_edges
-    try:
-        edges_to_save = last_constellation_edges if last_constellation_edges else []
-    except NameError:
-        edges_to_save = []
-    name = constellationNameInput.value
-    saved_constellations.append({'name': name, 'edges': edges_to_save})
-    ui.notify('Saved!', type='positive', position='top')
-    clear_constellation_highlight()
-    _apply_to_plot()
-
-constellationSaveBtn.on('click', save_constellation)
-
-
-#Region name of constellation controls
-with ui.row().classes('items-center'):
-    ui.label('Constellation name:').style('margin-right: 8px;')
-    constellationNameInput = ui.input().style('min-width: 180px;')
-    constellationNameInput.disable()
-
-# Enable/disable constellationNameInput based on active_control
-def update_constellation_name_input():
-    if active_control == 'constellationSelectBtn':
-        constellationNameInput.enable()
-    else:
-        constellationNameInput.disable()
-
-# Patch recolor to also update input enabled state
-_orig_recolor = recolor
-def recolor(active_key: str) -> None:
-    _orig_recolor(active_key)
-    update_constellation_name_input()
-#endregion
-
-#region star map
-#coordinates TODO: put the real data here
-coords = SkyCoord(
-    ra=[s['ra'] for s in star_data] * u.deg,
-    dec=[s['dec'] for s in star_data] * u.deg,
-    frame='icrs',
-)
-
-#Get the coordinates in the format Plotly wants
-lon = ((coords.ra.deg + 180) % 360) - 180   # RA → [-180°, +180°]
-lat = coords.dec.deg
-
-
-#plotly figure
-fig = go.Figure()
-fig.update_layout(clickmode='event')
-
-
-#Traces that make parts of the plot visible and/or selectable
-# Make each link FIRST (so it renders underneath later marker traces)
-fig.add_trace(go.Scattergeo(
-    lon=[], lat=[],
-    mode='lines',
-    line=dict(color='blue', width=3),
-    name='link',
-))
-
-# Invisible large star hitbox markers to ease clicking
-fig.add_trace(go.Scattergeo(
-    lon=lon, lat=lat,
-    mode='markers',
-    marker=dict(size=22, color='rgba(0,0,0,0)'),
-    hoverinfo='skip',
-    name='hitbox',
-    showlegend=False,
-))
-
-# Visible stars
-fig.add_trace(go.Scattergeo(
-    lon=lon, lat=lat,
-    mode='markers',
-    marker=dict(size=6, color='black'),
-    hoverinfo='text',
-    text=[f"Star {s['id']}: RA={s['ra']}, Dec={s['dec']}" for s in star_data],
-    name='stars',
-))
-
-# Selected star highlight
-fig.add_trace(go.Scattergeo(
-    lon=[], lat=[],
-    mode='markers',
-    marker=dict(size=18, color='red', line=dict(color='rgba(255,255,0,0.85)', width=3)),
-    name='selection',
-    showlegend=False,
-))
-
-# Selected link highlight
-fig.add_trace(go.Scattergeo(
-    lon=[], lat=[],
-    mode='lines',
-    line=dict(color='red', width=5),
-    name='link_selected',
-    showlegend=False,
-))
-
-# Selected constellation highlight (group of links)
-fig.add_trace(go.Scattergeo(
-    lon=[], lat=[],
-    mode='lines',
-    line=dict(color='orange', width=6),
-    name='constellation_selected',
-    showlegend=False,
-))
-
-# One invisible marker per curve position to make links clickable
-fig.add_trace(go.Scattergeo(
-    lon=[], lat=[],
-    mode='markers',
-    marker=dict(size=32, color='rgba(0,0,0,0)'),  # 0s => invisible
-    name='link_hit',
-    hoverinfo='none',
-    showlegend=False,
-))
-
-def _trace_index(name: str) -> int:
-    for i, tr in enumerate(fig.data):
-        if getattr(tr, 'name', None) == name:
-            return i
-    raise ValueError(f'Trace with name {name!r} not found')
-
-def clear_star_highlight():
-    try:
-        si = _trace_index('selection')
-        fig.data[si].lon, fig.data[si].lat = [], []
-    except ValueError:
-        pass
-
-def clear_link_highlight():
-    try:
-        li = _trace_index('link_selected')
-        fig.data[li].lon, fig.data[li].lat = [], []
-    except ValueError:
-        pass
-
-def clear_constellation_highlight():
-    try:
-        ci = _trace_index('constellation_selected')
-        fig.data[ci].lon, fig.data[ci].lat = [], []
-    except ValueError:
-        pass
-
-#re-apply config and update whenever needed
-#TODO: Legend controls still show up and are usable but *very* broken
-PLOTLY_CONFIG = {
-    'scrollZoom': False,          # block wheel zoom
-    'doubleClick': False,         # block double‑click autoscale/zoom
-    'displayModeBar': False,      # hide toolbar completely
+# Database connection details
+DB_CONFIG = {
+    'host': 'vm-jgaier',
+    'user': 'andrew',
+    'password': 'andrew',
+    'database': 'mystic_sky_mapper'
 }
 
-def _apply_to_plot():
-    plot._props['options']['config'] = PLOTLY_CONFIG
-    plot.update()
-
-# map appearance: frame & 30° grid visible
-fig.update_geos(
-    projection_type='mollweide',
-    showframe=True,
-    framecolor='black',
-    #Uncomment to show grid lines
-    #lonaxis=dict(showgrid=True, dtick=30,
-    #             gridcolor='rgba(0,0,0,0.3)', gridwidth=1),
-    #lataxis=dict(showgrid=True, dtick=30,
-    #             gridcolor='rgba(0,0,0,0.3)', gridwidth=1),
-    showland=False, showcountries=False, showcoastlines=False, #this ain't a map of the earth we're looking at
-)
-plotHeight=750
-fig.update_layout(
-    #title='Interactive Star Map – pan/zoom disabled', #Change/uncomment if you think we need a title on the graph
-    dragmode=False,        # Don't allow drag‑pan or box zoom
-    margin=dict(l=0, r=0, t=40, b=0),
-    height=plotHeight,
-)
-
-#Add to the UI
-plot = ui.plotly(fig).style('width: 100%; height: ' + str(plotHeight + 10) + 'px;')
-plot._props.setdefault('options', {})['config'] = PLOTLY_CONFIG
-plot.update()                                 # push initial options
-#endregion
-
-#region click interaction
-selected: list[int] = []              # current (partial) pair, 0–2 indices
-edges_lon: list[float|None] = []      # accumulated link segment longitudes (with None separators)
-edges_lat: list[float|None] = []      # accumulated link segment latitudes
-edges_set: set[tuple[int,int]] = set()  # store unique undirected edges (i<j)
-selected_edge: tuple[int, int] | None = None  # For link deletion
-edges_list: list[tuple[int, int]] = []   # keeps (a,b) in the SAME order as edges_lon/lat
-N_CURVE_SAMPLES = 64      # drawing detail for each edge (curvature)
-N_HIT_MARKERS   = 9       # click targets per edge along the curve
-
-def _wrap180(x: float) -> float:
-    return ((x + 180.0) % 360.0) - 180.0
-
-def _gc_path_lons_lats(i: int, j: int, samples: int = N_CURVE_SAMPLES):
-    c1, c2 = coords[i], coords[j]
-    sep = c1.separation(c2)
-    pa  = c1.position_angle(c2)
-    fracs = np.linspace(0.0, 1.0, samples)
-    pts = [c1.directional_offset_by(pa, sep * f) for f in fracs]
-    lon_deg = [_wrap180(p.ra.deg) for p in pts]
-    lat_deg = [p.dec.deg         for p in pts]
-    out_lon, out_lat = [lon_deg[0]], [lat_deg[0]]
-    for k in range(1, len(lon_deg)):
-        if abs(lon_deg[k] - lon_deg[k-1]) > 180 - 1e-6:
-            out_lon.append(None); out_lat.append(None)
-        out_lon.append(lon_deg[k]); out_lat.append(lat_deg[k])
-    return out_lon, out_lat
-
-def _rebuild_edges_from_list():
-    global edges_lon, edges_lat
-    edges_lon, edges_lat = [], []
-
-    hit_lon, hit_lat, hit_edge = [], [], []
-    for e_idx, (i, j) in enumerate(edges_list):
-        # visible curved blue path (+ None separator)
-        LON, LAT = _gc_path_lons_lats(i, j, N_CURVE_SAMPLES)
-        edges_lon.extend(LON + [None]); edges_lat.extend(LAT + [None])
-
-        # many invisible click targets along the curve (skip exact endpoints)
-        c1, c2 = coords[i], coords[j]
-        sep = c1.separation(c2); pa = c1.position_angle(c2)
-        for f in np.linspace(0.1, 0.9, N_HIT_MARKERS):
-            p = c1.directional_offset_by(pa, sep * f)
-            hit_lon.append(_wrap180(p.ra.deg))
-            hit_lat.append(p.dec.deg)
-            hit_edge.append(e_idx)          # ← maps marker → edge index
-
-    link_idx     = _trace_index('link')
-    link_hit_idx = _trace_index('link_hit')
-
-    fig.data[link_idx].lon,     fig.data[link_idx].lat     = edges_lon, edges_lat
-    fig.data[link_hit_idx].lon, fig.data[link_hit_idx].lat = hit_lon,   hit_lat
-    fig.data[link_hit_idx].customdata = hit_edge           # ← crucial
-
-def _draw_edges_into_trace(edges: list[tuple[int,int]], trace_name: str):
-    """Render the given edges as curved segments into the named trace."""
-    global last_constellation_edges
-    if trace_name == 'constellation_selected':
-        last_constellation_edges = edges.copy()
-    LON_ALL: list[float|None] = []
-    LAT_ALL: list[float|None] = []
-    for i, j in edges:
-        LON, LAT = _gc_path_lons_lats(i, j, N_CURVE_SAMPLES)
-        LON_ALL.extend(LON + [None])
-        LAT_ALL.extend(LAT + [None])
-    ti = _trace_index(trace_name)
-    fig.data[ti].lon, fig.data[ti].lat = LON_ALL, LAT_ALL
-
-def _build_constellation_from_edge(edge: tuple[int,int]) -> list[tuple[int,int]]:
-    """Return all edges connected to the given edge as a constellation (connected component)."""
-    if not edges_list:
-        return []
-    # Build adjacency of stars
-    adj: dict[int, set[int]] = {}
-    for a, b in edges_list:
-        adj.setdefault(a, set()).add(b)
-        adj.setdefault(b, set()).add(a)
-    # BFS/DFS from the two endpoints
-    start_a, start_b = edge
-    stack = [start_a, start_b]
-    seen: set[int] = set()
-    while stack:
-        n = stack.pop()
-        if n in seen:
-            continue
-        seen.add(n)
-        for m in adj.get(n, ()): stack.append(m)
-    # Collect all edges whose endpoints are within seen
-    comp_edges = [(a, b) for (a, b) in edges_list if a in seen and b in seen]
-    return comp_edges
-
-def _highlight_all_edges_as_constellation():
-    if edges_list:
-        _draw_edges_into_trace(edges_list, 'constellation_selected')
-    else:
-        clear_constellation_highlight()
-    _apply_to_plot()
-
-def handle_click(e: events.GenericEventArguments):
-    global selected_edge, selected
-
-    stars_idx      = _trace_index('stars')
-    hitbox_idx     = _trace_index('hitbox')
-    link_hit_idx   = _trace_index('link_hit')
-    selection_idx  = _trace_index('selection')
-
-    pts = e.args.get('points') or []
-    if not pts:
-        return
-
-    # ================= CONSTELLATION MODE =================
-    if active_control == 'constellationSelectBtn':
-        link_hit_idx = _trace_index('link_hit')
-        p = next((x for x in pts if x.get('curveNumber') == link_hit_idx), None)
-        if not p:
-            return
-        idx = p.get('pointIndex', p.get('pointNumber'))
-        if idx is None:
-            return
-        edge_num = int(idx) // N_HIT_MARKERS
-        if not (0 <= edge_num < len(edges_list)):
-            return
-        seed = edges_list[edge_num]
-        comp = _build_constellation_from_edge(seed)
-        _draw_edges_into_trace(comp, 'constellation_selected')
-        _apply_to_plot()
-        return
-
-    # ================= LINK MODE =================
-    if active_control == 'linkSelectBtn':
-        pts = e.args.get('points') or []
-        link_hit_idx = _trace_index('link_hit')
-
-        # Prefer the hit layer; if the click didn't land on it, ignore
-        p = next((x for x in pts if x.get('curveNumber') == link_hit_idx), None)
-        if not p:
-            return
-
-        # Derive edge index from the hit point's index within the link_hit trace
-        idx = p.get('pointIndex', p.get('pointNumber'))
-        if idx is None:
-            return
-        edge_num = int(idx) // N_HIT_MARKERS
-        if not (0 <= edge_num < len(edges_list)):
-            return
-
-        selected_edge = edges_list[edge_num]
-        i, j = selected_edge
-
-        # Draw a curved red overlay for the selected edge
-        LON, LAT = _gc_path_lons_lats(i, j, N_CURVE_SAMPLES)
-        sel_idx = _trace_index('link_selected')
-        fig.data[sel_idx].lon, fig.data[sel_idx].lat = LON, LAT
-
-        _apply_to_plot()
-        return
+try:
+    # Establish a connection to the MySQL database
     
-    # ================= STAR MODE =================
-    if active_control == 'starSelectBtn':
-        # pick a star (either visible star or invisible star hitbox)
-        p = next((p for p in pts if p.get('curveNumber') in (stars_idx, hitbox_idx)), None)
-        if not p:
-            return
-        idx = p.get('pointIndex', p.get('pointNumber'))
-        if idx is None:
+    mydb = mysql.connector.connect(**DB_CONFIG)
+    cursor = mydb.cursor()
+    saved_constellations = []
+
+    # Call the stored procedure with a parameter (e.g., limit = 100)
+    cursor.callproc('getStars', (100,))
+    for result in cursor.stored_results():
+        df = pd.DataFrame(result.fetchall(), columns=[desc[0] for desc in result.description])
+
+    #star data object; just load in arbitrarily for now
+    star_data = [
+        {
+            'id': row['SSDS_Object_ID'],
+            'ra': row['Right_Ascension'],
+            'dec': row['Declination']
+        }
+        for _, row in df.iterrows()
+    ]
+
+    #region button controls
+    control_buttons: dict[str,ui.button] ={}
+    constellation_buttons: list[ui.button] = []
+
+    #Toggle constellation button group depending on which control button was clicked
+    def toggle_constellationButtons(state: bool) -> None:
+        for b in constellation_buttons:
+            (b.enable if state else b.disable)()
+
+
+    #Track which control button is active
+    #Default to selecting stars
+    active_control: str = 'starSelectBtn'
+
+    #Change the color of the currently-selected control button
+    def recolor(active_key: str) -> None:
+        global active_control
+        active_control = active_key
+        for key,b in control_buttons.items():
+            b.props(f'color={"negative" if key == active_key else "primary"}').update()
+
+
+    #When we're in our respective modes, make the other hitboxes too small to hit
+    def _set_mode_star():
+        fig.data[_trace_index('hitbox')].marker.size = 22
+        fig.data[_trace_index('link_hit')].marker.size = 0
+        _apply_to_plot()
+
+    def _set_mode_link():
+        fig.data[_trace_index('hitbox')].marker.size = 0
+        fig.data[_trace_index('link_hit')].marker.size = 36
+        _apply_to_plot()
+
+
+    #callbacks; makes it easier to do multiple things when a button is selected
+    def choose_star():
+        toggle_constellationButtons(False); recolor('starSelectBtn')
+        clear_link_highlight(); clear_constellation_highlight()
+        _set_mode_star()
+
+    def choose_link():
+        toggle_constellationButtons(False); recolor('linkSelectBtn')
+        clear_star_highlight(); clear_constellation_highlight()
+        _set_mode_link()
+
+    def choose_constellation():
+        toggle_constellationButtons(True); recolor('constellationSelectBtn')
+        clear_star_highlight(); clear_link_highlight()
+        _set_mode_link()  # enable link hit markers for picking
+        # Only highlight links that are NOT part of any saved constellation
+        used_edges = set()
+        for c in saved_constellations:
+            used_edges.update(c['edges'])
+        unused_edges = [e for e in edges_list if e not in used_edges]
+        if unused_edges:
+            _draw_edges_into_trace(unused_edges, 'constellation_selected')
+        else:
+            clear_constellation_highlight()
+        _apply_to_plot()
+    #endregion
+
+    #sign up dialog
+    with ui.dialog() as signupDialog,ui.card():
+        with ui.row():
+            ui.label('Username:').style('flex: 1;')
+            ui.input().style('flex: 2;')
+        with ui.row():
+            ui.label('Password:').style('flex: 1;')
+            ui.input(password=True).style('flex: 2;')
+        with ui.row():
+            ui.label('Confirm Password:').style('flex: 1;')
+            ui.input(password=True).style('flex: 2;')
+        with ui.row():
+            ui.button('Sign up', on_click=lambda: (signupDialog.close(), loginDialog.close())).style('flex: 1;') #TODO: don't just close the dialog here
+            ui.button('Cancel', on_click=signupDialog.close).style('flex: 1;')
+
+    #login dialog
+    with ui.dialog() as loginDialog,ui.card():
+        with ui.row():
+            ui.label('Username:').style('flex: 1;')
+            ui.input().style('flex: 2;')
+        with ui.row():
+            ui.label('Password:').style('flex: 1;')
+            ui.input(password=True).style('flex: 2;')
+        with ui.row():
+            ui.button('Login', on_click=loginDialog.close).style('flex: 1;') #TODO: don't just close the dialog here
+            ui.button('Sign up', on_click=signupDialog.open).style('flex: 1;')
+            ui.button('Cancel', on_click=loginDialog.close).style('flex: 1;')
+
+    #share dialog
+    with ui.dialog() as shareDialog,ui.card():
+        with ui.row():
+            ui.label('Share selected constellation with user:').style('flex: 1;')
+            ui.input('User ID').style('flex: 2;')
+        with ui.row():
+            ui.button('Share', on_click=shareDialog.close).style('flex: 1;') #TODO: don't just close the dialog here
+            ui.button('Cancel', on_click=shareDialog.close).style('flex: 1;')
+
+    #'Header' label
+    with ui.row():
+        ui.label('A Sky Full of Stars by Mythic Sky Mapper').style('font-size: 24px; font-weight: bold')
+
+    #region buttons/slider
+    class NumStars:
+        def __init__(self):
+            self.numStars = 5
+    num_stars_instance = NumStars()
+    with ui.row().classes('items-center w-full'):
+        numStarsSlider = ui.slider(min=0, max=100, step=10).bind_value(num_stars_instance,'numStars').style('width: 200px')
+
+        starSelectBtn = ui.button(icon='star',on_click=choose_star,color='primary').tooltip('Select stars, select the same star again to unselect')
+        linkSelectBtn = ui.button(icon='link',on_click=choose_link,color='primary').tooltip('Select links, use Del key to delete')
+        constellationSelectBtn = ui.button(icon='timeline',on_click=choose_constellation,color='primary').tooltip('Select constellations')
+        
+        # Register control buttons
+        control_buttons.update({
+            'starSelectBtn': starSelectBtn,
+            'linkSelectBtn': linkSelectBtn,
+            'constellationSelectBtn': constellationSelectBtn
+        })
+        # Set starSelectBtn as visually selected by default
+        starSelectBtn.props('color=negative').update()
+
+        with ui.button_group():
+            constellationSaveBtn = ui.button(icon='save').tooltip('Save constellation')
+            constellationEditBtn = ui.button(icon='edit').tooltip('Edit constellation')
+            constellationDeleteBtn = ui.button(icon='delete').tooltip('Delete constellation')
+            constellationShareBtn = ui.button(icon='share', on_click=shareDialog.open).tooltip('Share constellation')
+            constellation_buttons.extend([constellationSaveBtn, constellationEditBtn, constellationDeleteBtn, constellationShareBtn])
+            toggle_constellationButtons(False) #disabled by default
+
+        ui.space()
+        loginBtn = ui.button('Login', on_click=loginDialog.open).tooltip('Log in to share/save constellations')
+    #endregion
+
+
+    #TODO: comment this better
+    def save_constellation():
+        # Get selected links from the overlay trace
+        ci = _trace_index('constellation_selected')
+        # Find which links are currently highlighted
+        # We'll use the edges that were last drawn into the overlay
+        # (Assume _draw_edges_into_trace was called with the current selection)
+        # For simplicity, store the currently highlighted edges
+        highlighted_edges = []
+        # Reconstruct from the overlay trace (lon/lat) by matching to edges_list
+        # But we already have the last selection in the overlay, so let's keep a global
+        global last_constellation_edges
+        try:
+            edges_to_save = last_constellation_edges if last_constellation_edges else []
+        except NameError:
+            edges_to_save = []
+        name = constellationNameInput.value
+        saved_constellations.append({'name': name, 'edges': edges_to_save})
+        ui.notify('Saved!', type='positive', position='top')
+        clear_constellation_highlight()
+        _apply_to_plot()
+
+    constellationSaveBtn.on('click', save_constellation)
+
+
+    #Region name of constellation controls
+    with ui.row().classes('items-center'):
+        ui.label('Constellation name:').style('margin-right: 8px;')
+        constellationNameInput = ui.input().style('min-width: 180px;')
+        constellationNameInput.disable()
+
+    # Enable/disable constellationNameInput based on active_control
+    def update_constellation_name_input():
+        if active_control == 'constellationSelectBtn':
+            constellationNameInput.enable()
+        else:
+            constellationNameInput.disable()
+
+    # Patch recolor to also update input enabled state
+    _orig_recolor = recolor
+    def recolor(active_key: str) -> None:
+        _orig_recolor(active_key)
+        update_constellation_name_input()
+    #endregion
+
+    #region star map
+    #coordinates TODO: put the real data here
+    coords = SkyCoord(
+        ra=[s['ra'] for s in star_data] * u.deg,
+        dec=[s['dec'] for s in star_data] * u.deg,
+        frame='icrs',
+    )
+
+    #Get the coordinates in the format Plotly wants
+    lon = ((coords.ra.deg + 180) % 360) - 180   # RA → [-180°, +180°]
+    lat = coords.dec.deg
+
+
+    #plotly figure
+    fig = go.Figure()
+    fig.update_layout(clickmode='event')
+
+
+    #Traces that make parts of the plot visible and/or selectable
+    # Make each link FIRST (so it renders underneath later marker traces)
+    fig.add_trace(go.Scattergeo(
+        lon=[], lat=[],
+        mode='lines',
+        line=dict(color='blue', width=3),
+        name='link',
+    ))
+
+    # Invisible large star hitbox markers to ease clicking
+    fig.add_trace(go.Scattergeo(
+        lon=lon, lat=lat,
+        mode='markers',
+        marker=dict(size=22, color='rgba(0,0,0,0)'),
+        hoverinfo='skip',
+        name='hitbox',
+        showlegend=False,
+    ))
+
+    # Visible stars
+    fig.add_trace(go.Scattergeo(
+        lon=lon, lat=lat,
+        mode='markers',
+        marker=dict(size=6, color='black'),
+        hoverinfo='text',
+        text=[f"Star {s['id']}: RA={s['ra']}, Dec={s['dec']}" for s in star_data],
+        name='stars',
+    ))
+
+    # Selected star highlight
+    fig.add_trace(go.Scattergeo(
+        lon=[], lat=[],
+        mode='markers',
+        marker=dict(size=18, color='red', line=dict(color='rgba(255,255,0,0.85)', width=3)),
+        name='selection',
+        showlegend=False,
+    ))
+
+    # Selected link highlight
+    fig.add_trace(go.Scattergeo(
+        lon=[], lat=[],
+        mode='lines',
+        line=dict(color='red', width=5),
+        name='link_selected',
+        showlegend=False,
+    ))
+
+    # Selected constellation highlight (group of links)
+    fig.add_trace(go.Scattergeo(
+        lon=[], lat=[],
+        mode='lines',
+        line=dict(color='orange', width=6),
+        name='constellation_selected',
+        showlegend=False,
+    ))
+
+    # One invisible marker per curve position to make links clickable
+    fig.add_trace(go.Scattergeo(
+        lon=[], lat=[],
+        mode='markers',
+        marker=dict(size=32, color='rgba(0,0,0,0)'),  # 0s => invisible
+        name='link_hit',
+        hoverinfo='none',
+        showlegend=False,
+    ))
+
+    def _trace_index(name: str) -> int:
+        for i, tr in enumerate(fig.data):
+            if getattr(tr, 'name', None) == name:
+                return i
+        raise ValueError(f'Trace with name {name!r} not found')
+
+    def clear_star_highlight():
+        try:
+            si = _trace_index('selection')
+            fig.data[si].lon, fig.data[si].lat = [], []
+        except ValueError:
+            pass
+
+    def clear_link_highlight():
+        try:
+            li = _trace_index('link_selected')
+            fig.data[li].lon, fig.data[li].lat = [], []
+        except ValueError:
+            pass
+
+    def clear_constellation_highlight():
+        try:
+            ci = _trace_index('constellation_selected')
+            fig.data[ci].lon, fig.data[ci].lat = [], []
+        except ValueError:
+            pass
+
+    #re-apply config and update whenever needed
+    #TODO: Legend controls still show up and are usable but *very* broken
+    PLOTLY_CONFIG = {
+        'scrollZoom': False,          # block wheel zoom
+        'doubleClick': False,         # block double‑click autoscale/zoom
+        'displayModeBar': False,      # hide toolbar completely
+    }
+
+    def _apply_to_plot():
+        plot._props['options']['config'] = PLOTLY_CONFIG
+        plot.update()
+
+    # map appearance: frame & 30° grid visible
+    fig.update_geos(
+        projection_type='mollweide',
+        showframe=True,
+        framecolor='black',
+        #Uncomment to show grid lines
+        #lonaxis=dict(showgrid=True, dtick=30,
+        #             gridcolor='rgba(0,0,0,0.3)', gridwidth=1),
+        #lataxis=dict(showgrid=True, dtick=30,
+        #             gridcolor='rgba(0,0,0,0.3)', gridwidth=1),
+        showland=False, showcountries=False, showcoastlines=False, #this ain't a map of the earth we're looking at
+    )
+    plotHeight=750
+    fig.update_layout(
+        #title='Interactive Star Map – pan/zoom disabled', #Change/uncomment if you think we need a title on the graph
+        dragmode=False,        # Don't allow drag‑pan or box zoom
+        margin=dict(l=0, r=0, t=40, b=0),
+        height=plotHeight,
+    )
+
+    #Add to the UI
+    plot = ui.plotly(fig).style('width: 100%; height: ' + str(plotHeight + 10) + 'px;')
+    plot._props.setdefault('options', {})['config'] = PLOTLY_CONFIG
+    plot.update()                                 # push initial options
+    #endregion
+
+    #region click interaction
+    selected: list[int] = []              # current (partial) pair, 0–2 indices
+    edges_lon: list[float|None] = []      # accumulated link segment longitudes (with None separators)
+    edges_lat: list[float|None] = []      # accumulated link segment latitudes
+    edges_set: set[tuple[int,int]] = set()  # store unique undirected edges (i<j)
+    selected_edge: tuple[int, int] | None = None  # For link deletion
+    edges_list: list[tuple[int, int]] = []   # keeps (a,b) in the SAME order as edges_lon/lat
+    N_CURVE_SAMPLES = 64      # drawing detail for each edge (curvature)
+    N_HIT_MARKERS   = 9       # click targets per edge along the curve
+
+    def _wrap180(x: float) -> float:
+        return ((x + 180.0) % 360.0) - 180.0
+
+    def _gc_path_lons_lats(i: int, j: int, samples: int = N_CURVE_SAMPLES):
+        c1, c2 = coords[i], coords[j]
+        sep = c1.separation(c2)
+        pa  = c1.position_angle(c2)
+        fracs = np.linspace(0.0, 1.0, samples)
+        pts = [c1.directional_offset_by(pa, sep * f) for f in fracs]
+        lon_deg = [_wrap180(p.ra.deg) for p in pts]
+        lat_deg = [p.dec.deg         for p in pts]
+        out_lon, out_lat = [lon_deg[0]], [lat_deg[0]]
+        for k in range(1, len(lon_deg)):
+            if abs(lon_deg[k] - lon_deg[k-1]) > 180 - 1e-6:
+                out_lon.append(None); out_lat.append(None)
+            out_lon.append(lon_deg[k]); out_lat.append(lat_deg[k])
+        return out_lon, out_lat
+
+    def _rebuild_edges_from_list():
+        global edges_lon, edges_lat
+        edges_lon, edges_lat = [], []
+
+        hit_lon, hit_lat, hit_edge = [], [], []
+        for e_idx, (i, j) in enumerate(edges_list):
+            # visible curved blue path (+ None separator)
+            LON, LAT = _gc_path_lons_lats(i, j, N_CURVE_SAMPLES)
+            edges_lon.extend(LON + [None]); edges_lat.extend(LAT + [None])
+
+            # many invisible click targets along the curve (skip exact endpoints)
+            c1, c2 = coords[i], coords[j]
+            sep = c1.separation(c2); pa = c1.position_angle(c2)
+            for f in np.linspace(0.1, 0.9, N_HIT_MARKERS):
+                p = c1.directional_offset_by(pa, sep * f)
+                hit_lon.append(_wrap180(p.ra.deg))
+                hit_lat.append(p.dec.deg)
+                hit_edge.append(e_idx)          # ← maps marker → edge index
+
+        link_idx     = _trace_index('link')
+        link_hit_idx = _trace_index('link_hit')
+
+        fig.data[link_idx].lon,     fig.data[link_idx].lat     = edges_lon, edges_lat
+        fig.data[link_hit_idx].lon, fig.data[link_hit_idx].lat = hit_lon,   hit_lat
+        fig.data[link_hit_idx].customdata = hit_edge           # ← crucial
+
+    def _draw_edges_into_trace(edges: list[tuple[int,int]], trace_name: str):
+        """Render the given edges as curved segments into the named trace."""
+        global last_constellation_edges
+        if trace_name == 'constellation_selected':
+            last_constellation_edges = edges.copy()
+        LON_ALL: list[float|None] = []
+        LAT_ALL: list[float|None] = []
+        for i, j in edges:
+            LON, LAT = _gc_path_lons_lats(i, j, N_CURVE_SAMPLES)
+            LON_ALL.extend(LON + [None])
+            LAT_ALL.extend(LAT + [None])
+        ti = _trace_index(trace_name)
+        fig.data[ti].lon, fig.data[ti].lat = LON_ALL, LAT_ALL
+
+    def _build_constellation_from_edge(edge: tuple[int,int]) -> list[tuple[int,int]]:
+        """Return all edges connected to the given edge as a constellation (connected component)."""
+        if not edges_list:
+            return []
+        # Build adjacency of stars
+        adj: dict[int, set[int]] = {}
+        for a, b in edges_list:
+            adj.setdefault(a, set()).add(b)
+            adj.setdefault(b, set()).add(a)
+        # BFS/DFS from the two endpoints
+        start_a, start_b = edge
+        stack = [start_a, start_b]
+        seen: set[int] = set()
+        while stack:
+            n = stack.pop()
+            if n in seen:
+                continue
+            seen.add(n)
+            for m in adj.get(n, ()): stack.append(m)
+        # Collect all edges whose endpoints are within seen
+        comp_edges = [(a, b) for (a, b) in edges_list if a in seen and b in seen]
+        return comp_edges
+
+    def _highlight_all_edges_as_constellation():
+        if edges_list:
+            _draw_edges_into_trace(edges_list, 'constellation_selected')
+        else:
+            clear_constellation_highlight()
+        _apply_to_plot()
+
+    def handle_click(e: events.GenericEventArguments):
+        global selected_edge, selected
+
+        stars_idx      = _trace_index('stars')
+        hitbox_idx     = _trace_index('hitbox')
+        link_hit_idx   = _trace_index('link_hit')
+        selection_idx  = _trace_index('selection')
+
+        pts = e.args.get('points') or []
+        if not pts:
             return
 
-        # toggle deselect if re-clicking the same star
-        if len(selected) == 1 and selected[0] == idx:
-            selected.clear()
-            fig.data[selection_idx].lon = []
-            fig.data[selection_idx].lat = []
+        # ================= CONSTELLATION MODE =================
+        if active_control == 'constellationSelectBtn':
+            link_hit_idx = _trace_index('link_hit')
+            p = next((x for x in pts if x.get('curveNumber') == link_hit_idx), None)
+            if not p:
+                return
+            idx = p.get('pointIndex', p.get('pointNumber'))
+            if idx is None:
+                return
+            edge_num = int(idx) // N_HIT_MARKERS
+            if not (0 <= edge_num < len(edges_list)):
+                return
+            seed = edges_list[edge_num]
+            comp = _build_constellation_from_edge(seed)
+            _draw_edges_into_trace(comp, 'constellation_selected')
             _apply_to_plot()
             return
 
-        if idx not in selected:
-            selected.append(idx)
-        if len(selected) > 2:
-            selected[:] = selected[-2:]  # keep most recent two
+        # ================= LINK MODE =================
+        if active_control == 'linkSelectBtn':
+            pts = e.args.get('points') or []
+            link_hit_idx = _trace_index('link_hit')
 
-        # show big red markers for current selection
-        fig.data[selection_idx].lon = [lon[i] for i in selected]
-        fig.data[selection_idx].lat = [lat[i] for i in selected]
+            # Prefer the hit layer; if the click didn't land on it, ignore
+            p = next((x for x in pts if x.get('curveNumber') == link_hit_idx), None)
+            if not p:
+                return
 
-        # commit edge when we have two picks
-        if len(selected) == 2:
-            i, j = selected
-            a, b = (i, j) if i < j else (j, i)
-            if a != b and (a, b) not in edges_set:
-                edges_set.add((a, b))
-                edges_list.append((a, b))
-                _rebuild_edges_from_list()       # updates blue curve + hit markers
+            # Derive edge index from the hit point's index within the link_hit trace
+            idx = p.get('pointIndex', p.get('pointNumber'))
+            if idx is None:
+                return
+            edge_num = int(idx) // N_HIT_MARKERS
+            if not (0 <= edge_num < len(edges_list)):
+                return
 
-            selected.clear()
-            fig.data[selection_idx].lon = []
-            fig.data[selection_idx].lat = []
+            selected_edge = edges_list[edge_num]
+            i, j = selected_edge
 
-        _apply_to_plot()
-  
-plot.on('plotly_click', handle_click)           # hook JS → Python
+            # Draw a curved red overlay for the selected edge
+            LON, LAT = _gc_path_lons_lats(i, j, N_CURVE_SAMPLES)
+            sel_idx = _trace_index('link_selected')
+            fig.data[sel_idx].lon, fig.data[sel_idx].lat = LON, LAT
 
-# Listen for Del key to delete selected edge
-def _is_delete_key(e: events.KeyEventArguments) -> bool:
-    k = getattr(e, 'key', None)
-    if isinstance(k, str):                      # older NiceGUI: key is a plain str
-        name, code = k, ''
-    else:                                       # newer: key is an object with .name/.code
-        name = (getattr(k, 'name', '') or '')
-        code = (getattr(k, 'code', '') or '')
-    return name.lower() in ('delete', 'del') or code == 'Delete'
+            _apply_to_plot()
+            return
+        
+        # ================= STAR MODE =================
+        if active_control == 'starSelectBtn':
+            # pick a star (either visible star or invisible star hitbox)
+            p = next((p for p in pts if p.get('curveNumber') in (stars_idx, hitbox_idx)), None)
+            if not p:
+                return
+            idx = p.get('pointIndex', p.get('pointNumber'))
+            if idx is None:
+                return
 
-def _delete_selected_edge():
-    global selected_edge, edges_set, edges_list
-    if active_control == 'linkSelectBtn' and selected_edge is not None:
-        if selected_edge in edges_set:
-            edges_set.remove(selected_edge)
-        if selected_edge in edges_list:
-            edges_list.remove(selected_edge)
+            # toggle deselect if re-clicking the same star
+            if len(selected) == 1 and selected[0] == idx:
+                selected.clear()
+                fig.data[selection_idx].lon = []
+                fig.data[selection_idx].lat = []
+                _apply_to_plot()
+                return
 
-        # rebuild both traces from the ordered list
-        _rebuild_edges_from_list()
+            if idx not in selected:
+                selected.append(idx)
+            if len(selected) > 2:
+                selected[:] = selected[-2:]  # keep most recent two
 
-        # clear red overlay
-        link_sel_idx = _trace_index('link_selected')
-        fig.data[link_sel_idx].lon = []
-        fig.data[link_sel_idx].lat = []
-        selected_edge = None
+            # show big red markers for current selection
+            fig.data[selection_idx].lon = [lon[i] for i in selected]
+            fig.data[selection_idx].lat = [lat[i] for i in selected]
 
-        _apply_to_plot()
-        #ui.notify('Edge deleted.', type='info', position='top')
+            # commit edge when we have two picks
+            if len(selected) == 2:
+                i, j = selected
+                a, b = (i, j) if i < j else (j, i)
+                if a != b and (a, b) not in edges_set:
+                    edges_set.add((a, b))
+                    edges_list.append((a, b))
+                    _rebuild_edges_from_list()       # updates blue curve + hit markers
 
-def _on_key(e: events.KeyEventArguments):
-    if getattr(e.action, 'keydown', False) and _is_delete_key(e):
-        _delete_selected_edge()
+                selected.clear()
+                fig.data[selection_idx].lon = []
+                fig.data[selection_idx].lat = []
 
-# Create the global keyboard listener
-ui.keyboard(on_key=_on_key)
-#endregion
+            _apply_to_plot()
+    
+    plot.on('plotly_click', handle_click)           # hook JS → Python
 
-# Start the UI
-ui.run()
+    # Listen for Del key to delete selected edge
+    def _is_delete_key(e: events.KeyEventArguments) -> bool:
+        k = getattr(e, 'key', None)
+        if isinstance(k, str):                      # older NiceGUI: key is a plain str
+            name, code = k, ''
+        else:                                       # newer: key is an object with .name/.code
+            name = (getattr(k, 'name', '') or '')
+            code = (getattr(k, 'code', '') or '')
+        return name.lower() in ('delete', 'del') or code == 'Delete'
+
+    def _delete_selected_edge():
+        global selected_edge, edges_set, edges_list
+        if active_control == 'linkSelectBtn' and selected_edge is not None:
+            if selected_edge in edges_set:
+                edges_set.remove(selected_edge)
+            if selected_edge in edges_list:
+                edges_list.remove(selected_edge)
+
+            # rebuild both traces from the ordered list
+            _rebuild_edges_from_list()
+
+            # clear red overlay
+            link_sel_idx = _trace_index('link_selected')
+            fig.data[link_sel_idx].lon = []
+            fig.data[link_sel_idx].lat = []
+            selected_edge = None
+
+            _apply_to_plot()
+            #ui.notify('Edge deleted.', type='info', position='top')
+
+    def _on_key(e: events.KeyEventArguments):
+        if getattr(e.action, 'keydown', False) and _is_delete_key(e):
+            _delete_selected_edge()
+
+    # Create the global keyboard listener
+    ui.keyboard(on_key=_on_key)
+    #endregion
+
+    # Start the UI
+    ui.run()
+
+except mysql.connector.Error as err:
+    print(f"Error connecting to MySQL: {err}")
+
+finally:
+    # Close the database connection if it was established
+    if 'cursor' in locals():
+        cursor.close()
+    if 'mydb' in locals() and mydb.is_connected():
+        mydb.close()
+        print("MySQL connection closed.")
