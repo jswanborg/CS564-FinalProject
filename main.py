@@ -17,13 +17,12 @@ DB_CONFIG = {
 
 try:
     # Establish a connection to the MySQL database
-    
     mydb = mysql.connector.connect(**DB_CONFIG)
     cursor = mydb.cursor()
     saved_constellations = []
 
     # Call the stored procedure with a parameter (e.g., limit = 100)
-    cursor.callproc('getStars', (100,))
+    cursor.callproc('getStars', (1000,))
     for result in cursor.stored_results():
         df = pd.DataFrame(result.fetchall(), columns=[desc[0] for desc in result.description])
 
@@ -99,35 +98,82 @@ try:
     #endregion
 
     #sign up dialog
-    with ui.dialog() as signupDialog,ui.card():
+    with ui.dialog() as signupDialog, ui.card():
         with ui.row():
             ui.label('Username:').style('flex: 1;')
-            ui.input().style('flex: 2;')
+            username_input = ui.input().style('flex: 2;')
         with ui.row():
             ui.label('Password:').style('flex: 1;')
-            ui.input(password=True).style('flex: 2;')
+            password_input = ui.input(password=True).style('flex: 2;')
         with ui.row():
             ui.label('Confirm Password:').style('flex: 1;')
-            ui.input(password=True).style('flex: 2;')
+            confirm_password_input = ui.input(password=True).style('flex: 2;')
         with ui.row():
-            ui.button('Sign up', on_click=lambda: (signupDialog.close(), loginDialog.close())).style('flex: 1;') #TODO: don't just close the dialog here
+            def handle_signup():
+                username = username_input.value
+                password = password_input.value
+                confirm_password = confirm_password_input.value
+                if not username or not password:
+                    ui.notify('Username and password required.', type='negative')
+                    return
+                if password != confirm_password:
+                    ui.notify('Passwords do not match.', type='negative')
+                    return
+                try:
+                    # Check if username is already used
+                    result_args = cursor.callproc('userNameUsed', (username,))
+                    # The second argument is the OUT parameter (1 if used, 0 otherwise)
+                    if result_args[-1] == 1:
+                        ui.notify('Username is not unique.', type='negative')
+                        return
+                    # Username is not used, proceed to create user
+                    cursor.callproc('createUser', (username, password,))
+                    mydb.commit()
+                    ui.notify('Sign up successful!', type='positive')
+                    signupDialog.close()
+                    # Only close loginDialog if it exists
+                    if 'loginDialog' in globals():
+                        loginDialog.close()
+                except Exception as e:
+                    ui.notify(f'Error: {e}', type='negative')
+            ui.button('Sign up', on_click=handle_signup).style('flex: 1;')
             ui.button('Cancel', on_click=signupDialog.close).style('flex: 1;')
 
     #login dialog
-    with ui.dialog() as loginDialog,ui.card():
+    with ui.dialog() as loginDialog, ui.card():
         with ui.row():
             ui.label('Username:').style('flex: 1;')
-            ui.input().style('flex: 2;')
+            login_username_input = ui.input().style('flex: 2;')
         with ui.row():
             ui.label('Password:').style('flex: 1;')
-            ui.input(password=True).style('flex: 2;')
+            login_password_input = ui.input(password=True).style('flex: 2;')
         with ui.row():
-            ui.button('Login', on_click=loginDialog.close).style('flex: 1;') #TODO: don't just close the dialog here
+            def handle_login():
+                username = login_username_input.value
+                password = login_password_input.value
+                if not username or not password:
+                    ui.notify('Username and password required.', type='negative')
+                    return
+                try:
+                    # Call checkPassword stored procedure
+                    result_args = cursor.callproc('checkPassword', (username, password,))
+                    # The third argument is the OUT parameter (1 if correct, 0 otherwise)
+                    print("Username:", username)
+                    print("Password:", password)
+                    print("Result args:", result_args)
+                    if result_args[-1] == 1:
+                        ui.notify('Login successful!', type='positive')
+                        loginDialog.close()
+                    else:
+                        ui.notify('Incorrect username or password.', type='negative')
+                except Exception as e:
+                    ui.notify(f'Error: {e}', type='negative')
+            ui.button('Login', on_click=handle_login).style('flex: 1;')
             ui.button('Sign up', on_click=signupDialog.open).style('flex: 1;')
             ui.button('Cancel', on_click=loginDialog.close).style('flex: 1;')
 
     #share dialog
-    with ui.dialog() as shareDialog,ui.card():
+    with ui.dialog() as shareDialog, ui.card():
         with ui.row():
             ui.label('Share selected constellation with user:').style('flex: 1;')
             ui.input('User ID').style('flex: 2;')
@@ -565,7 +611,7 @@ try:
                 fig.data[selection_idx].lat = []
 
             _apply_to_plot()
-    
+
     plot.on('plotly_click', handle_click)           # hook JS → Python
 
     # Listen for Del key to delete selected edge
@@ -606,16 +652,17 @@ try:
     ui.keyboard(on_key=_on_key)
     #endregion
 
+    def cleanup():
+        if 'cursor' in locals():
+            cursor.close()
+        if 'mydb' in locals() and mydb.is_connected():
+            mydb.close()
+            print("MySQL connection closed.")
+
+    #ui.on_disconnect(cleanup)
     # Start the UI
     ui.run()
 
 except mysql.connector.Error as err:
     print(f"Error connecting to MySQL: {err}")
 
-finally:
-    # Close the database connection if it was established
-    if 'cursor' in locals():
-        cursor.close()
-    if 'mydb' in locals() and mydb.is_connected():
-        mydb.close()
-        print("MySQL connection closed.")
