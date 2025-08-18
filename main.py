@@ -163,9 +163,6 @@ try:
                     cursor.callproc('checkPassword', (username, password,))
                     for result in cursor.stored_results():
                         row = result.fetchone()
-                    print("Username:", username)
-                    print("Password:", password)
-                    print("Result args:", row[0])
                     if row[0] == 1:
                         logged_in_user = username  # Save the username to the global
                         ui.notify('Login successful!', type='positive')
@@ -247,15 +244,13 @@ try:
             ui.notify('Please log in to save constellations.', type='negative')
             return
         constellation_name = constellationNameInput.value
-        print(logged_in_user)
         cursor.callproc('createConstellation', (constellation_name,logged_in_user,))
         for result in cursor.stored_results():
                         row = result.fetchone()
         constellation_ID = row[0]  # Get the ID of the newly created constellation
         saved_constellations.append({'id': constellation_ID, 'name': constellation_name, 'links': links_to_save})
         for link in links_to_save:
-            print(constellation_ID, link[0], link[1])
-            cursor.callproc('addLine', (constellation_ID, link[0], link[1],))
+            cursor.callproc('addLine', (constellation_ID, star_data[link[0]]['id'], star_data[link[1]]['id'],))
         mydb.commit()  # Commit after adding all lines
         ui.notify('Saved!', type='positive', position='top')
         clear_constellation_highlight()
