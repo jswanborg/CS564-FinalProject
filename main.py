@@ -20,9 +20,10 @@ try:
     mydb = mysql.connector.connect(**DB_CONFIG)
     cursor = mydb.cursor()
     saved_constellations = []
+    logged_in_user = None  # Declare as global so you can modify it
 
     # Call the stored procedure with a parameter (e.g., limit = 100)
-    cursor.callproc('getStars', (1000,))
+    cursor.callproc('getStars', (500,))
     for result in cursor.stored_results():
         df = pd.DataFrame(result.fetchall(), columns=[desc[0] for desc in result.description])
 
@@ -86,12 +87,12 @@ try:
         clear_star_highlight(); clear_link_highlight()
         _set_mode_link()  # enable link hit markers for picking
         # Only highlight links that are NOT part of any saved constellation
-        used_edges = set()
+        used_links = set()
         for c in saved_constellations:
-            used_edges.update(c['edges'])
-        unused_edges = [e for e in edges_list if e not in used_edges]
-        if unused_edges:
-            _draw_edges_into_trace(unused_edges, 'constellation_selected')
+            used_links.update(c['links'])
+        unused_links = [e for e in links_list if e not in used_links]
+        if unused_links:
+            _draw_links_into_trace(unused_links, 'constellation_selected')
         else:
             clear_constellation_highlight()
         _apply_to_plot()
@@ -151,6 +152,7 @@ try:
             login_password_input = ui.input(password=True).style('flex: 2;')
         with ui.row():
             def handle_login():
+                global logged_in_user
                 username = login_username_input.value
                 password = login_password_input.value
                 if not username or not password:
@@ -161,11 +163,11 @@ try:
                     cursor.callproc('checkPassword', (username, password,))
                     for result in cursor.stored_results():
                         row = result.fetchone()
-                    # The third argument is the OUT parameter (1 if correct, 0 otherwise)
                     print("Username:", username)
                     print("Password:", password)
                     print("Result args:", row[0])
                     if row[0] == 1:
+                        logged_in_user = username  # Save the username to the global
                         ui.notify('Login successful!', type='positive')
                         loginDialog.close()
                     else:
@@ -195,7 +197,7 @@ try:
             self.numStars = 5
     num_stars_instance = NumStars()
     with ui.row().classes('items-center w-full'):
-        numStarsSlider = ui.slider(min=0, max=100, step=10).bind_value(num_stars_instance,'numStars').style('width: 200px')
+        #numStarsSlider = ui.slider(min=0, max=100, step=10).bind_value(num_stars_instance,'numStars').style('width: 200px')
 
         starSelectBtn = ui.button(icon='star',on_click=choose_star,color='primary').tooltip('Select stars, select the same star again to unselect')
         linkSelectBtn = ui.button(icon='link',on_click=choose_link,color='primary').tooltip('Select links, use Del key to delete')
@@ -225,25 +227,41 @@ try:
 
     #TODO: comment this better
     def save_constellation():
+        
         # Get selected links from the overlay trace
         ci = _trace_index('constellation_selected')
         # Find which links are currently highlighted
-        # We'll use the edges that were last drawn into the overlay
-        # (Assume _draw_edges_into_trace was called with the current selection)
-        # For simplicity, store the currently highlighted edges
-        highlighted_edges = []
-        # Reconstruct from the overlay trace (lon/lat) by matching to edges_list
+        # We'll use the links that were last drawn into the overlay
+        # (Assume _draw_links_into_trace was called with the current selection)
+        # For simplicity, store the currently highlighted links
+        highlighted_links = []
+        # Reconstruct from the overlay trace (lon/lat) by matching to links_list
         # But we already have the last selection in the overlay, so let's keep a global
-        global last_constellation_edges
+        global last_constellation_links,logged_in_user
         try:
-            edges_to_save = last_constellation_edges if last_constellation_edges else []
+            links_to_save = last_constellation_links if last_constellation_links else []
         except NameError:
-            edges_to_save = []
-        name = constellationNameInput.value
-        saved_constellations.append({'name': name, 'edges': edges_to_save})
+            links_to_save = []
+        
+        if not logged_in_user:  # Check if user is logged in
+            ui.notify('Please log in to save constellations.', type='negative')
+            return
+        constellation_name = constellationNameInput.value
+        print(logged_in_user)
+        cursor.callproc('createConstellation', (constellation_name,logged_in_user,))
+        for result in cursor.stored_results():
+                        row = result.fetchone()
+        constellation_ID = row[0]  # Get the ID of the newly created constellation
+        saved_constellations.append({'id': constellation_ID, 'name': constellation_name, 'links': links_to_save})
+        for link in links_to_save:
+            print(constellation_ID, link[0], link[1])
+            cursor.callproc('addLine', (constellation_ID, link[0], link[1],))
+        mydb.commit()  # Commit after adding all lines
         ui.notify('Saved!', type='positive', position='top')
         clear_constellation_highlight()
         _apply_to_plot()
+
+        
 
     constellationSaveBtn.on('click', save_constellation)
 
@@ -419,13 +437,13 @@ try:
 
     #region click interaction
     selected: list[int] = []              # current (partial) pair, 0–2 indices
-    edges_lon: list[float|None] = []      # accumulated link segment longitudes (with None separators)
-    edges_lat: list[float|None] = []      # accumulated link segment latitudes
-    edges_set: set[tuple[int,int]] = set()  # store unique undirected edges (i<j)
-    selected_edge: tuple[int, int] | None = None  # For link deletion
-    edges_list: list[tuple[int, int]] = []   # keeps (a,b) in the SAME order as edges_lon/lat
-    N_CURVE_SAMPLES = 64      # drawing detail for each edge (curvature)
-    N_HIT_MARKERS   = 9       # click targets per edge along the curve
+    links_lon: list[float|None] = []      # accumulated link segment longitudes (with None separators)
+    links_lat: list[float|None] = []      # accumulated link segment latitudes
+    links_set: set[tuple[int,int]] = set()  # store unique undirected links (i<j)
+    selected_link: tuple[int, int] | None = None  # For link deletion
+    links_list: list[tuple[int, int]] = []   # keeps (a,b) in the SAME order as links_lon/lat
+    N_CURVE_SAMPLES = 64      # drawing detail for each link (curvature)
+    N_HIT_MARKERS   = 9       # click targets per link along the curve
 
     def _wrap180(x: float) -> float:
         return ((x + 180.0) % 360.0) - 180.0
@@ -445,15 +463,15 @@ try:
             out_lon.append(lon_deg[k]); out_lat.append(lat_deg[k])
         return out_lon, out_lat
 
-    def _rebuild_edges_from_list():
-        global edges_lon, edges_lat
-        edges_lon, edges_lat = [], []
+    def _rebuild_links_from_list():
+        global links_lon, links_lat
+        links_lon, links_lat = [], []
 
-        hit_lon, hit_lat, hit_edge = [], [], []
-        for e_idx, (i, j) in enumerate(edges_list):
+        hit_lon, hit_lat, hit_link = [], [], []
+        for e_idx, (i, j) in enumerate(links_list):
             # visible curved blue path (+ None separator)
             LON, LAT = _gc_path_lons_lats(i, j, N_CURVE_SAMPLES)
-            edges_lon.extend(LON + [None]); edges_lat.extend(LAT + [None])
+            links_lon.extend(LON + [None]); links_lat.extend(LAT + [None])
 
             # many invisible click targets along the curve (skip exact endpoints)
             c1, c2 = coords[i], coords[j]
@@ -462,40 +480,40 @@ try:
                 p = c1.directional_offset_by(pa, sep * f)
                 hit_lon.append(_wrap180(p.ra.deg))
                 hit_lat.append(p.dec.deg)
-                hit_edge.append(e_idx)          # ← maps marker → edge index
+                hit_link.append(e_idx)          # ← maps marker → link index
 
         link_idx     = _trace_index('link')
         link_hit_idx = _trace_index('link_hit')
 
-        fig.data[link_idx].lon,     fig.data[link_idx].lat     = edges_lon, edges_lat
+        fig.data[link_idx].lon,     fig.data[link_idx].lat     = links_lon, links_lat
         fig.data[link_hit_idx].lon, fig.data[link_hit_idx].lat = hit_lon,   hit_lat
-        fig.data[link_hit_idx].customdata = hit_edge           # ← crucial
+        fig.data[link_hit_idx].customdata = hit_link           # ← crucial
 
-    def _draw_edges_into_trace(edges: list[tuple[int,int]], trace_name: str):
-        """Render the given edges as curved segments into the named trace."""
-        global last_constellation_edges
+    def _draw_links_into_trace(links: list[tuple[int,int]], trace_name: str):
+        """Render the given links as curved segments into the named trace."""
+        global last_constellation_links
         if trace_name == 'constellation_selected':
-            last_constellation_edges = edges.copy()
+            last_constellation_links = links.copy()
         LON_ALL: list[float|None] = []
         LAT_ALL: list[float|None] = []
-        for i, j in edges:
+        for i, j in links:
             LON, LAT = _gc_path_lons_lats(i, j, N_CURVE_SAMPLES)
             LON_ALL.extend(LON + [None])
             LAT_ALL.extend(LAT + [None])
         ti = _trace_index(trace_name)
         fig.data[ti].lon, fig.data[ti].lat = LON_ALL, LAT_ALL
 
-    def _build_constellation_from_edge(edge: tuple[int,int]) -> list[tuple[int,int]]:
-        """Return all edges connected to the given edge as a constellation (connected component)."""
-        if not edges_list:
+    def _build_constellation_from_link(link: tuple[int,int]) -> list[tuple[int,int]]:
+        """Return all links connected to the given link as a constellation (connected component)."""
+        if not links_list:
             return []
         # Build adjacency of stars
         adj: dict[int, set[int]] = {}
-        for a, b in edges_list:
+        for a, b in links_list:
             adj.setdefault(a, set()).add(b)
             adj.setdefault(b, set()).add(a)
         # BFS/DFS from the two endpoints
-        start_a, start_b = edge
+        start_a, start_b = link
         stack = [start_a, start_b]
         seen: set[int] = set()
         while stack:
@@ -504,19 +522,19 @@ try:
                 continue
             seen.add(n)
             for m in adj.get(n, ()): stack.append(m)
-        # Collect all edges whose endpoints are within seen
-        comp_edges = [(a, b) for (a, b) in edges_list if a in seen and b in seen]
-        return comp_edges
+        # Collect all links whose endpoints are within seen
+        comp_links = [(a, b) for (a, b) in links_list if a in seen and b in seen]
+        return comp_links
 
-    def _highlight_all_edges_as_constellation():
-        if edges_list:
-            _draw_edges_into_trace(edges_list, 'constellation_selected')
+    def _highlight_all_links_as_constellation():
+        if links_list:
+            _draw_links_into_trace(links_list, 'constellation_selected')
         else:
             clear_constellation_highlight()
         _apply_to_plot()
 
     def handle_click(e: events.GenericEventArguments):
-        global selected_edge, selected
+        global selected_link, selected
 
         stars_idx      = _trace_index('stars')
         hitbox_idx     = _trace_index('hitbox')
@@ -536,12 +554,12 @@ try:
             idx = p.get('pointIndex', p.get('pointNumber'))
             if idx is None:
                 return
-            edge_num = int(idx) // N_HIT_MARKERS
-            if not (0 <= edge_num < len(edges_list)):
+            link_num = int(idx) // N_HIT_MARKERS
+            if not (0 <= link_num < len(links_list)):
                 return
-            seed = edges_list[edge_num]
-            comp = _build_constellation_from_edge(seed)
-            _draw_edges_into_trace(comp, 'constellation_selected')
+            seed = links_list[link_num]
+            comp = _build_constellation_from_link(seed)
+            _draw_links_into_trace(comp, 'constellation_selected')
             _apply_to_plot()
             return
 
@@ -555,18 +573,18 @@ try:
             if not p:
                 return
 
-            # Derive edge index from the hit point's index within the link_hit trace
+            # Derive link index from the hit point's index within the link_hit trace
             idx = p.get('pointIndex', p.get('pointNumber'))
             if idx is None:
                 return
-            edge_num = int(idx) // N_HIT_MARKERS
-            if not (0 <= edge_num < len(edges_list)):
+            link_num = int(idx) // N_HIT_MARKERS
+            if not (0 <= link_num < len(links_list)):
                 return
 
-            selected_edge = edges_list[edge_num]
-            i, j = selected_edge
+            selected_link = links_list[link_num]
+            i, j = selected_link
 
-            # Draw a curved red overlay for the selected edge
+            # Draw a curved red overlay for the selected link
             LON, LAT = _gc_path_lons_lats(i, j, N_CURVE_SAMPLES)
             sel_idx = _trace_index('link_selected')
             fig.data[sel_idx].lon, fig.data[sel_idx].lat = LON, LAT
@@ -601,14 +619,14 @@ try:
             fig.data[selection_idx].lon = [lon[i] for i in selected]
             fig.data[selection_idx].lat = [lat[i] for i in selected]
 
-            # commit edge when we have two picks
+            # commit link when we have two picks
             if len(selected) == 2:
                 i, j = selected
                 a, b = (i, j) if i < j else (j, i)
-                if a != b and (a, b) not in edges_set:
-                    edges_set.add((a, b))
-                    edges_list.append((a, b))
-                    _rebuild_edges_from_list()       # updates blue curve + hit markers
+                if a != b and (a, b) not in links_set:
+                    links_set.add((a, b))
+                    links_list.append((a, b))
+                    _rebuild_links_from_list()       # updates blue curve + hit markers
 
                 selected.clear()
                 fig.data[selection_idx].lon = []
@@ -618,7 +636,7 @@ try:
 
     plot.on('plotly_click', handle_click)           # hook JS → Python
 
-    # Listen for Del key to delete selected edge
+    # Listen for Del key to delete selected link
     def _is_delete_key(e: events.KeyEventArguments) -> bool:
         k = getattr(e, 'key', None)
         if isinstance(k, str):                      # older NiceGUI: key is a plain str
@@ -628,29 +646,29 @@ try:
             code = (getattr(k, 'code', '') or '')
         return name.lower() in ('delete', 'del') or code == 'Delete'
 
-    def _delete_selected_edge():
-        global selected_edge, edges_set, edges_list
-        if active_control == 'linkSelectBtn' and selected_edge is not None:
-            if selected_edge in edges_set:
-                edges_set.remove(selected_edge)
-            if selected_edge in edges_list:
-                edges_list.remove(selected_edge)
+    def _delete_selected_link():
+        global selected_link, links_set, links_list
+        if active_control == 'linkSelectBtn' and selected_link is not None:
+            if selected_link in links_set:
+                links_set.remove(selected_link)
+            if selected_link in links_list:
+                links_list.remove(selected_link)
 
             # rebuild both traces from the ordered list
-            _rebuild_edges_from_list()
+            _rebuild_links_from_list()
 
             # clear red overlay
             link_sel_idx = _trace_index('link_selected')
             fig.data[link_sel_idx].lon = []
             fig.data[link_sel_idx].lat = []
-            selected_edge = None
+            selected_link = None
 
             _apply_to_plot()
-            #ui.notify('Edge deleted.', type='info', position='top')
+            #ui.notify('link deleted.', type='info', position='top')
 
     def _on_key(e: events.KeyEventArguments):
         if getattr(e.action, 'keydown', False) and _is_delete_key(e):
-            _delete_selected_edge()
+            _delete_selected_link()
 
     # Create the global keyboard listener
     ui.keyboard(on_key=_on_key)
