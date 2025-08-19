@@ -40,11 +40,17 @@ try:
     #region button controls
     control_buttons: dict[str,ui.button] ={}
     constellation_buttons: list[ui.button] = []
+    constellation_action_buttons: list[ui.button] = []
 
     #Toggle constellation button group depending on which control button was clicked
     def _toggle_constellationButtons(state: bool) -> None:
         for b in constellation_buttons:
             (b.enable if state else b.disable)()
+
+    #Utility to enable/disable constellation action buttons
+    def _toggle_constellation_action_buttons(enabled: bool):
+        for b in constellation_action_buttons:
+            (b.enable if enabled else b.disable)()
 
 
     #Track which control button is active
@@ -55,8 +61,9 @@ try:
     def recolor(active_key: str) -> None:
         global active_control
         active_control = active_key
-        for key,b in control_buttons.items():
+        for key, b in control_buttons.items():
             b.props(f'color={"negative" if key == active_key else "primary"}').update()
+        update_constellation_name_input()
 
 
     #When we're in our respective modes, make the other star_hites too small to hit
@@ -93,8 +100,10 @@ try:
         unused_links = [e for e in links_list if e not in used_links]
         if unused_links:
             _draw_links_into_trace(unused_links, 'constellation_selected')
+            _toggle_constellation_action_buttons(True)
         else:
             _clear_constellation_highlight()
+            _toggle_constellation_action_buttons(False)
         _apply_to_plot()
     #endregion
 
@@ -179,9 +188,27 @@ try:
     with ui.dialog() as shareDialog, ui.card():
         with ui.row():
             ui.label('Share selected constellation with user:').style('flex: 1;')
-            ui.input().style('flex: 2;')
+            shareDialogUserInput = ui.input().style('flex: 2;')
         with ui.row():
-            ui.button('Share', on_click=shareDialog.close).style('flex: 1;') #TODO: don't just close the dialog here
+            # Share button clicked
+            def share_constellation():
+                share_user_name = shareDialogUserInput.value
+                # Find the currently selected constellation
+                try:
+                    # Use the last selected constellation if available
+                    if saved_constellations:
+                        const_ID = saved_constellations[-1]['id']
+                    else:
+                        ui.notify('No constellation selected to share.', type='negative')
+                        return
+                    cursor.callproc('share', (const_ID, share_user_name))
+                    mydb.commit()
+                    ui.notify(f"Constellation shared with {share_user_name}!", type='positive')
+                except Exception as e:
+                    ui.notify(f"Error sharing constellation: {e}", type='negative')
+                shareDialog.close()
+
+            shareDialogShareBtn = ui.button('Share', on_click=share_constellation).style('flex: 1;')
             ui.button('Cancel', on_click=shareDialog.close).style('flex: 1;')
 
     #'Header' label
@@ -213,11 +240,14 @@ try:
 
         with ui.button_group():
             constellationSaveBtn = ui.button(icon='save').tooltip('Save constellation')
-            constellationEditBtn = ui.button(icon='edit').tooltip('Edit constellation')
             constellationDeleteBtn = ui.button(icon='delete').tooltip('Delete constellation')
             constellationShareBtn = ui.button(icon='share', on_click=shareDialog.open).tooltip('Share constellation')
-            constellation_buttons.extend([constellationSaveBtn, constellationEditBtn, constellationDeleteBtn, constellationShareBtn])
+            constellation_buttons.extend([constellationSaveBtn, constellationDeleteBtn, constellationShareBtn])
+            constellation_action_buttons.extend([constellationSaveBtn, constellationDeleteBtn, constellationShareBtn])
             _toggle_constellationButtons(False) #disabled by default
+
+        # Disable save, delete, and share buttons by default until a constellation is selected
+        _toggle_constellation_action_buttons(False)
 
         ui.space()
         loginBtn = ui.button('Login', on_click=loginDialog.open).tooltip('Log in to share/save constellations')
@@ -275,12 +305,6 @@ try:
             constellationNameInput.enable()
         else:
             constellationNameInput.disable()
-
-    #Patch recolor to also update input enabled state
-    _orig_recolor = recolor
-    def recolor(active_key: str) -> None:
-        _orig_recolor(active_key)
-        update_constellation_name_input()
     #endregion
 
     #region star map
@@ -656,4 +680,3 @@ try:
 
 except mysql.connector.Error as err:
     print(f"Error connecting to MySQL: {err}")
-
