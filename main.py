@@ -7,7 +7,7 @@ import mysql.connector
 import pandas as pd
 
 
-#Database connection details
+#Database connection details; change if needed
 DB_CONFIG = {
     'host': 'vm-jgaier',
     'user': 'andrew',
@@ -42,7 +42,7 @@ try:
     constellation_buttons: list[ui.button] = []
 
     #Toggle constellation button group depending on which control button was clicked
-    def toggle_constellationButtons(state: bool) -> None:
+    def _toggle_constellationButtons(state: bool) -> None:
         for b in constellation_buttons:
             (b.enable if state else b.disable)()
 
@@ -59,32 +59,32 @@ try:
             b.props(f'color={"negative" if key == active_key else "primary"}').update()
 
 
-    #When we're in our respective modes, make the other hitboxes too small to hit
+    #When we're in our respective modes, make the other star_hites too small to hit
     def _set_mode_star():
-        fig.data[_trace_index('hitbox')].marker.size = 22
+        fig.data[_trace_index('star_hit')].marker.size = 22
         fig.data[_trace_index('link_hit')].marker.size = 0
         _apply_to_plot()
 
     def _set_mode_link():
-        fig.data[_trace_index('hitbox')].marker.size = 0
+        fig.data[_trace_index('star_hit')].marker.size = 0
         fig.data[_trace_index('link_hit')].marker.size = 36
         _apply_to_plot()
 
 
     #callbacks; makes it easier to do multiple things when a button is selected
     def choose_star():
-        toggle_constellationButtons(False); recolor('starSelectBtn')
-        clear_link_highlight(); clear_constellation_highlight()
+        _toggle_constellationButtons(False); recolor('starSelectBtn')
+        _clear_link_highlight(); _clear_constellation_highlight()
         _set_mode_star()
 
     def choose_link():
-        toggle_constellationButtons(False); recolor('linkSelectBtn')
-        clear_star_highlight(); clear_constellation_highlight()
+        _toggle_constellationButtons(False); recolor('linkSelectBtn')
+        _clear_star_highlight(); _clear_constellation_highlight()
         _set_mode_link()
 
     def choose_constellation():
-        toggle_constellationButtons(True); recolor('constellationSelectBtn')
-        clear_star_highlight(); clear_link_highlight()
+        _toggle_constellationButtons(True); recolor('constellationSelectBtn')
+        _clear_star_highlight(); _clear_link_highlight()
         _set_mode_link()  #enable link hit markers for picking
         #Only highlight links that are NOT part of any saved constellation
         used_links = set()
@@ -94,7 +94,7 @@ try:
         if unused_links:
             _draw_links_into_trace(unused_links, 'constellation_selected')
         else:
-            clear_constellation_highlight()
+            _clear_constellation_highlight()
         _apply_to_plot()
     #endregion
 
@@ -179,7 +179,7 @@ try:
     with ui.dialog() as shareDialog, ui.card():
         with ui.row():
             ui.label('Share selected constellation with user:').style('flex: 1;')
-            ui.input('User ID').style('flex: 2;')
+            ui.input().style('flex: 2;')
         with ui.row():
             ui.button('Share', on_click=shareDialog.close).style('flex: 1;') #TODO: don't just close the dialog here
             ui.button('Cancel', on_click=shareDialog.close).style('flex: 1;')
@@ -188,13 +188,16 @@ try:
     with ui.row():
         ui.label('A Sky Full of Stars by Mythic Sky Mapper').style('font-size: 24px; font-weight: bold')
 
-    #region buttons/slider
+    #region buttons
+    """
+    #This doesn't do anything yet
     class NumStars:
         def __init__(self):
             self.numStars = 5
     num_stars_instance = NumStars()
+    """
     with ui.row().classes('items-center w-full'):
-        #numStarsSlider = ui.slider(min=0, max=100, step=10).bind_value(num_stars_instance,'numStars').style('width: 200px')
+        #numStarsSlider = ui.slider(min=0, max=100, step=10).bind_value(num_stars_instance,'numStars').style('width: 200px') #Feature not yet implemented
         starSelectBtn = ui.button(icon='star',on_click=choose_star,color='primary').tooltip('Select stars, select the same star again to unselect')
         linkSelectBtn = ui.button(icon='link',on_click=choose_link,color='primary').tooltip('Select links, use Del key to delete')
         constellationSelectBtn = ui.button(icon='timeline',on_click=choose_constellation,color='primary').tooltip('Select constellations')
@@ -214,7 +217,7 @@ try:
             constellationDeleteBtn = ui.button(icon='delete').tooltip('Delete constellation')
             constellationShareBtn = ui.button(icon='share', on_click=shareDialog.open).tooltip('Share constellation')
             constellation_buttons.extend([constellationSaveBtn, constellationEditBtn, constellationDeleteBtn, constellationShareBtn])
-            toggle_constellationButtons(False) #disabled by default
+            _toggle_constellationButtons(False) #disabled by default
 
         ui.space()
         loginBtn = ui.button('Login', on_click=loginDialog.open).tooltip('Log in to share/save constellations')
@@ -223,6 +226,7 @@ try:
     #region save constellation controls
     def save_constellation():
         global last_constellation_links,logged_in_user
+
         #Don't save if user is not logged in
         if not logged_in_user:
             ui.notify('Please log in to save constellations.', type='negative')
@@ -253,8 +257,9 @@ try:
         ui.notify('Saved!', type='positive', position='top')
 
         #Update the graph
-        clear_constellation_highlight()
+        _clear_constellation_highlight()
         _apply_to_plot()
+    
     constellationSaveBtn.on('click', save_constellation)
     #endregion
 
@@ -304,13 +309,13 @@ try:
         name='link',
     ))
 
-    #Invisible large star hitbox markers to ease clicking
+    #Invisible large star star_hit markers to ease clicking
     fig.add_trace(go.Scattergeo(
         lon=lon, lat=lat,
         mode='markers',
-        marker=dict(size=22, color='rgba(0,0,0,0)'),
+        marker=dict(size=22, color='rgba(0,0,0,0)'),  #0s => invisible
         hoverinfo='skip',
-        name='hitbox',
+        name='star_hit',
         showlegend=False,
     ))
 
@@ -367,21 +372,21 @@ try:
                 return i
         raise ValueError(f'Trace with name {name!r} not found')
 
-    def clear_star_highlight():
+    def _clear_star_highlight():
         try:
             si = _trace_index('selection')
             fig.data[si].lon, fig.data[si].lat = [], []
         except ValueError:
             pass
 
-    def clear_link_highlight():
+    def _clear_link_highlight():
         try:
             li = _trace_index('link_selected')
             fig.data[li].lon, fig.data[li].lat = [], []
         except ValueError:
             pass
 
-    def clear_constellation_highlight():
+    def _clear_constellation_highlight():
         try:
             ci = _trace_index('constellation_selected')
             fig.data[ci].lon, fig.data[ci].lat = [], []
@@ -520,15 +525,14 @@ try:
     def handle_click(e: events.GenericEventArguments):
         global selected_link, selected
 
-        stars_idx      = _trace_index('stars')
-        hitbox_idx     = _trace_index('hitbox')
-        link_hit_idx   = _trace_index('link_hit')
-        selection_idx  = _trace_index('selection')
+        stars_idx           = _trace_index('stars')
+        star_hit_idx        = _trace_index('star_hit')
+        link_hit_idx        = _trace_index('link_hit')
+        selected_star_idx   = _trace_index('selection')
 
         pts = e.args.get('points') or []
         if not pts:
             return
-        
 
         match active_control:
             case 'constellationSelectBtn':
@@ -568,7 +572,7 @@ try:
                 return
 
             case 'starSelectBtn':
-                p = next((p for p in pts if p.get('curveNumber') in (stars_idx, hitbox_idx)), None)
+                p = next((p for p in pts if p.get('curveNumber') in (stars_idx, star_hit_idx)), None)
                 if not p:
                     return
                 idx = p.get('pointIndex', p.get('pointNumber'))
@@ -576,16 +580,16 @@ try:
                     return
                 if len(selected) == 1 and selected[0] == idx:
                     selected.clear()
-                    fig.data[selection_idx].lon = []
-                    fig.data[selection_idx].lat = []
+                    fig.data[selected_star_idx].lon = []
+                    fig.data[selected_star_idx].lat = []
                     _apply_to_plot()
                     return
                 if idx not in selected:
                     selected.append(idx)
                 if len(selected) > 2:
                     selected[:] = selected[-2:]
-                fig.data[selection_idx].lon = [lon[i] for i in selected]
-                fig.data[selection_idx].lat = [lat[i] for i in selected]
+                fig.data[selected_star_idx].lon = [lon[i] for i in selected]
+                fig.data[selected_star_idx].lat = [lat[i] for i in selected]
                 if len(selected) == 2:
                     i, j = selected
                     a, b = (i, j) if i < j else (j, i)
@@ -594,8 +598,8 @@ try:
                         links_list.append((a, b))
                         _rebuild_links_from_list()
                     selected.clear()
-                    fig.data[selection_idx].lon = []
-                    fig.data[selection_idx].lat = []
+                    fig.data[selected_star_idx].lon = []
+                    fig.data[selected_star_idx].lat = []
                 _apply_to_plot()
 
     plot.on('plotly_click', handle_click)           #hook JS → Python
@@ -638,6 +642,7 @@ try:
     ui.keyboard(on_key=_on_key)
     #endregion
 
+    #Close the database connection
     def cleanup():
         if 'cursor' in locals():
             cursor.close()
