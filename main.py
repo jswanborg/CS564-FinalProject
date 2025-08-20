@@ -134,8 +134,8 @@ try:
                     cursor.callproc('userNameUsed', (username,))
                     for result in cursor.stored_results():
                         row = result.fetchone()
-                    #The second argument is the OUT parameter (1 if used, 0 otherwise)
-                    if row[0] == 1:
+                    #The second argument is the OUT parameter (2 if used, 1 otherwise)
+                    if row[0] == 2:
                         ui.notify('Username is not unique.', type='negative')
                         return
                     #Username is not used, proceed to create user
