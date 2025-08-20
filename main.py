@@ -172,10 +172,23 @@ try:
                     cursor.callproc('checkPassword', (username, password,))
                     for result in cursor.stored_results():
                         row = result.fetchone()
-                    if row[0] == 1:
+                    userId = row[0]
+                    if userId != 0:
                         logged_in_user = username  #Save the username to the global
                         ui.notify('Login successful!', type='positive')
                         loginDialog.close()
+                        # Fetch constellations for this user
+                        cursor.callproc('getConstellations', (userId,))
+                        for result in cursor.stored_results():
+                            constellations = result.fetchall()
+                            saved_constellations.clear()
+                            for c in constellations:
+                                # Assuming c = (id, name, links) and links is a list or can be parsed
+                                saved_constellations.append({
+                                    'id': c[0],
+                                    'name': c[1],
+                                    'links': c[2] if len(c) > 2 else []
+                                })
                     else:
                         ui.notify('Incorrect username or password.', type='negative')
                 except Exception as e:
@@ -245,6 +258,25 @@ try:
             constellation_buttons.extend([constellationSaveBtn, constellationDeleteBtn, constellationShareBtn])
             constellation_action_buttons.extend([constellationSaveBtn, constellationDeleteBtn, constellationShareBtn])
             _toggle_constellationButtons(False) #disabled by default
+
+            # Add delete handler
+            def handle_delete_constellation():
+                try:
+                    if saved_constellations:
+                        # Find the selected constellation by ID
+                        const_ID = saved_constellations[-1]['id']
+                        idx_to_remove = next((i for i, c in enumerate(saved_constellations) if c['id'] == const_ID), None)
+                        if idx_to_remove is not None:
+                            cursor.callproc('deleteConstellation', (const_ID,))
+                            mydb.commit()
+                            ui.notify('Constellation deleted!', type='positive')
+                            saved_constellations.pop(idx_to_remove)
+                            _toggle_constellation_action_buttons(False)
+                    else:
+                        ui.notify('No constellation selected to delete.', type='negative')
+                except Exception as e:
+                    ui.notify(f'Error deleting constellation: {e}', type='negative')
+            constellationDeleteBtn.on('click', handle_delete_constellation)
 
         # Disable save, delete, and share buttons by default until a constellation is selected
         _toggle_constellation_action_buttons(False)
