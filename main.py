@@ -25,7 +25,7 @@ try:
     #Call the stored procedure with a parameter (e.g., limit = 100)
     cursor.callproc('getStars', (500,))
     for result in cursor.stored_results():
-        df = pd.DataFrame(result.fetchall(), columns=[desc[0] for desc in result.description])
+        df = pd.DataFrame(result.fetchall(), columns=[desc[0] for desc in result.description])  # type: ignore
 
     #star data object; just load in arbitrarily for now
     star_data = [
@@ -68,13 +68,13 @@ try:
 
     #When we're in our respective modes, make the other star_hites too small to hit
     def _set_mode_star():
-        fig.data[_trace_index('star_hit')].marker.size = 22
-        fig.data[_trace_index('link_hit')].marker.size = 0
+        fig.data[_trace_index('star_hit')].marker.size = 22 #type: ignore
+        fig.data[_trace_index('link_hit')].marker.size = 0 #type: ignore
         _apply_to_plot()
 
     def _set_mode_link():
-        fig.data[_trace_index('star_hit')].marker.size = 0
-        fig.data[_trace_index('link_hit')].marker.size = 36
+        fig.data[_trace_index('star_hit')].marker.size = 0 #type: ignore
+        fig.data[_trace_index('link_hit')].marker.size = 36 #type: ignore
         _apply_to_plot()
 
 
@@ -135,7 +135,7 @@ try:
                     for result in cursor.stored_results():
                         row = result.fetchone()
                     #The second argument is the OUT parameter (2 if used, 1 otherwise)
-                    if row[0] == 2:
+                    if row[0] == 2: #type: ignore
                         ui.notify('Username is not unique.', type='negative')
                         return
                     #Username is not used, proceed to create user
@@ -172,23 +172,31 @@ try:
                     cursor.callproc('checkPassword', (username, password,))
                     for result in cursor.stored_results():
                         row = result.fetchone()
-                    userId = row[0]
+                    userId = row[0] #type: ignore
                     if userId != 0:
                         logged_in_user = username  #Save the username to the global
                         ui.notify('Login successful!', type='positive')
                         loginDialog.close()
-                        # Fetch constellations for this user
-                        cursor.callproc('getConstellations', (userId,))
-                        for result in cursor.stored_results():
-                            constellations = result.fetchall()
-                            saved_constellations.clear()
-                            for c in constellations:
-                                # Assuming c = (id, name, links) and links is a list or can be parsed
-                                saved_constellations.append({
-                                    'id': c[0],
-                                    'name': c[1],
-                                    'links': c[2] if len(c) > 2 else []
-                                })
+
+                        # Fetch constellations made by and shared with this user
+                        try:
+                            cursor.callproc('getConstellations', (logged_in_user,))
+                            for result in cursor.stored_results():
+                                constellations = result.fetchall()
+                                for c in constellations:
+                                    # Assuming c = (id, name, links) and links is a list or can be parsed
+                                    saved_constellations.append({
+                                        'id': c[0],  # type: ignore
+                                        'name': c[1],  # type: ignore
+                                        'links': c[2] if len(c) > 2 else []  # type: ignore
+                                    })
+                            # Update plot with loaded constellations
+                            for constellation in saved_constellations:
+                                if constellation['links']:
+                                    _draw_links_into_trace(constellation['links'], 'constellation_selected')
+                            _apply_to_plot()
+                        except Exception as e:
+                            ui.notify(f"Failed to get constellations: {e}", type='negative')
                     else:
                         ui.notify('Incorrect username or password.', type='negative')
                 except Exception as e:
@@ -305,7 +313,7 @@ try:
         cursor.callproc('createConstellation', (constellation_name,logged_in_user,))
         for result in cursor.stored_results():
                         row = result.fetchone()
-        constellation_ID = row[0] 
+        constellation_ID = row[0]  # type: ignore
         
         #Add the constellation to the in-memory list
         saved_constellations.append({'id': constellation_ID, 'name': constellation_name, 'links': links_to_save})
@@ -341,14 +349,14 @@ try:
 
     #region star map
     coords = SkyCoord(
-        ra=[s['ra'] for s in star_data] * u.deg,
-        dec=[s['dec'] for s in star_data] * u.deg,
+        ra=[s['ra'] for s in star_data] * u.deg,  # type: ignore
+        dec=[s['dec'] for s in star_data] * u.deg,  # type: ignore
         frame='icrs',
     )
 
     #Get the coordinates in the format Plotly wants
-    lon = ((coords.ra.deg + 180) % 360) - 180   #RA → [-180°, +180°]
-    lat = coords.dec.deg
+    lon = ((coords.ra.deg + 180) % 360) - 180   #RA → [-180°, +180°]  # type: ignore
+    lat = coords.dec.deg  # type: ignore
 
 
     #plotly figure
@@ -502,16 +510,16 @@ try:
 
     def _gc_path_lons_lats(i: int, j: int, samples: int = N_CURVE_SAMPLES):
         c1, c2 = coords[i], coords[j]
-        sep = c1.separation(c2)
-        pa  = c1.position_angle(c2)
+        sep = c1.separation(c2)  # type: ignore
+        pa  = c1.position_angle(c2)  # type: ignore
         fracs = np.linspace(0.0, 1.0, samples)
-        pts = [c1.directional_offset_by(pa, sep * f) for f in fracs]
+        pts = [c1.directional_offset_by(pa, sep * f) for f in fracs]  # type: ignore
         lon_deg = [_wrap180(p.ra.deg) for p in pts]
         lat_deg = [p.dec.deg         for p in pts]
         out_lon, out_lat = [lon_deg[0]], [lat_deg[0]]
         for k in range(1, len(lon_deg)):
             if abs(lon_deg[k] - lon_deg[k-1]) > 180 - 1e-6:
-                out_lon.append(None); out_lat.append(None)
+                out_lon.append(None); out_lat.append(None)  # type: ignore
             out_lon.append(lon_deg[k]); out_lat.append(lat_deg[k])
         return out_lon, out_lat
 
@@ -527,9 +535,9 @@ try:
 
             #many invisible click targets along the curve
             c1, c2 = coords[i], coords[j]
-            sep = c1.separation(c2); pa = c1.position_angle(c2)
+            sep = c1.separation(c2); pa = c1.position_angle(c2)  # type: ignore
             for f in np.linspace(0.1, 0.9, N_HIT_MARKERS):
-                p = c1.directional_offset_by(pa, sep * f)
+                p = c1.directional_offset_by(pa, sep * f)  # type: ignore
                 hit_lon.append(_wrap180(p.ra.deg))
                 hit_lat.append(p.dec.deg)
                 hit_link.append(e_idx)
@@ -645,7 +653,7 @@ try:
                 if len(selected) > 2:
                     selected[:] = selected[-2:]
                 fig.data[selected_star_idx].lon = [lon[i] for i in selected]
-                fig.data[selected_star_idx].lat = [lat[i] for i in selected]
+                fig.data[selected_star_idx].lat = [lat[i] for i in selected] #type: ignore
                 if len(selected) == 2:
                     i, j = selected
                     a, b = (i, j) if i < j else (j, i)
