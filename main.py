@@ -28,7 +28,7 @@ try:
     for result in cursor.stored_results():
         df = pd.DataFrame(result.fetchall(), columns=[desc[0] for desc in result.description])  # type: ignore
 
-    #star data object; just load in arbitrarily for now
+    #star data object
     star_data = [
         {
             'id': row['SSDS_Object_ID'],
@@ -300,7 +300,7 @@ try:
                                 if rows:
                                     constellations.extend(rows)
                             # Get constellations shared with this user
-                            cursor.callproc('getConstSharedWitUser', (userId,)) #no t in with
+                            cursor.callproc('getConstSharedWithUser', (userId,))
                             for result in cursor.stored_results():
                                 rows = result.fetchall()
                                 if rows:
@@ -384,7 +384,7 @@ try:
 
     #'Header' label
     with ui.row():
-        ui.label('A Sky Full of Stars by Mythic Sky Mapper').style('font-size: 24px; font-weight: bold')
+        ui.label('A Sky Full of Stars by Mystic Sky Mapper').style('font-size: 24px; font-weight: bold')
 
     #region buttons
     """
@@ -666,7 +666,7 @@ try:
     plot.update()                                 #push initial options
     #endregion
 
-    # Helpers that depend on fig/plot
+    #region helpers that depend on fig/plot
     PLOTLY_CONFIG = {
         'scrollZoom': False,
         'doubleClick': False,
@@ -748,8 +748,7 @@ try:
             if c.get('links'):
                 all_links.extend(c['links'])
         _draw_links_into_trace(all_links, 'constellations_saved')
-
-    # UI coloring and mode helpers are defined earlier; using them here
+    #endregion
 
     #region click interaction
     selected: list[int] = []              #current (partial) pair, 0–2 indices
@@ -871,23 +870,14 @@ try:
 
     plot.on('plotly_click', handle_click)           #hook JS → Python
 
-<<<<<<< HEAD
-                selected.clear()
-                fig.data[selection_idx].lon = []
-                fig.data[selection_idx].lat = []
-
-            _apply_to_plot()
-
-    plot.on('plotly_click', handle_click)           # hook JS → Python
-
     def load_user_constellations(username: str):
-        """Load all constellations for the given user from the database."""
+        #Load all constellations for the given user from the database.
         global saved_constellations, links_list, links_set
         saved_constellations = []
         links_list = []
         links_set = set()
         # ...fetch constellations from DB...
-        for constellation in fetched_constellations:
+        for constellation in fetched_constellations:  # type: ignore
             # constellation['links'] should be a list of (i, j) tuples
             saved_constellations.append(constellation)
             links_list.extend(constellation['links'])
@@ -895,13 +885,9 @@ try:
                 links_set.add(link)
         _rebuild_links_from_list()
         _apply_to_plot()
-    # TODO: Implement logic to fetch and store user's constellations
     pass
 
     # Listen for Del key to delete selected link
-=======
-    #Listen for Del key to delete selected link
->>>>>>> origin
     def _is_delete_key(e: events.KeyEventArguments) -> bool:
         k = getattr(e, 'key', None)
         if isinstance(k, str):                      #older NiceGUI: key is a plain str
@@ -939,7 +925,7 @@ try:
     ui.keyboard(on_key=_on_key)
     #endregion
 
-    #Close the database connection
+    #Close the database connection; not actually implemented yet
     def cleanup():
         if 'cursor' in locals():
             cursor.close()
