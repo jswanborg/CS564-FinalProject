@@ -631,6 +631,24 @@ try:
 
     plot.on('plotly_click', handle_click)           # hook JS → Python
 
+    def load_user_constellations(username: str):
+        """Load all constellations for the given user from the database."""
+        global saved_constellations, links_list, links_set
+        saved_constellations = []
+        links_list = []
+        links_set = set()
+        # ...fetch constellations from DB...
+        for constellation in fetched_constellations:
+            # constellation['links'] should be a list of (i, j) tuples
+            saved_constellations.append(constellation)
+            links_list.extend(constellation['links'])
+            for link in constellation['links']:
+                links_set.add(link)
+        _rebuild_links_from_list()
+        _apply_to_plot()
+    # TODO: Implement logic to fetch and store user's constellations
+    pass
+
     # Listen for Del key to delete selected link
     def _is_delete_key(e: events.KeyEventArguments) -> bool:
         k = getattr(e, 'key', None)
